@@ -12,7 +12,7 @@ class GMMCluster:
     Supports confidence-based classification and AIC model selection
     """
 
-    def __init__(self, n_components: int, max_iter: int = 100, tol: float = 1e-6, 
+    def __init__(self, n_components: int, max_iter: int = 100, tol: float = 1e-6,
                  random_state: int = 42, n_init: int = 10):
         """
         Initialize GMM clustering

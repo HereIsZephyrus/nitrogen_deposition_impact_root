@@ -1,56 +1,92 @@
+"""
+Raster data reader supporting NetCDF, HDF, and GeoTIFF formats
+"""
 import logging
 from pathlib import Path
-from typing import Tuple
 import numpy as np
 import xarray as xr
-from osgeo import gdal
+from osgeo import gdal, osr
 
 gdal.UseExceptions()
 
 logger = logging.getLogger(__name__)
 
+class Raster:
+    """
+    Raster data class
+    """
+    def __init__(self, data: np.ndarray, geotransform: tuple, resolution: float = 0.5):
+        """
+        Initialize raster data
+
+        Args:
+            data: Data array
+            geotransform: Geotransform parameters
+            resolution: Resolution in degrees
+        """
+        self.data = data
+        self.geotransform = geotransform
+        self.resolution = resolution
+
+    def update_data(self, data: np.ndarray) -> None:
+        """
+        Update raster data
+
+        Args:
+            data: Data array
+        """
+        self.data = data
+
 class RasterReader:
     """
-    Raster data reader supporting NetCDF and GeoTIFF formats
+    Raster data reader supporting NetCDF, HDF, and GeoTIFF formats
     """
 
     @staticmethod
-    def read_file(file_path: str) -> Tuple[np.ndarray, tuple, tuple]:
+    def read_file(file_path: str, resolution: float = 0.5) -> Raster:
         """
-        Read raster file (nc/nc4/tif/tiff)
+        Read raster file (nc/nc4/hdf/hdf5/tif/tiff)
 
         Args:
             file_path: Path to the raster file
-
+            resolution: Resolution in degrees
         Returns:
-            (data, geotransform, shape): Data array, geotransform parameters and shape
+            Raster object
         """
         file_path = Path(file_path)
 
-        if file_path.suffix.lower() in ['.nc', '.nc4']:
+        if file_path.suffix.lower() in ['.nc', '.nc4', '.hdf', '.hdf5']:
             logger.info("Reading NetCDF file: %s", file_path)
-            data, geotransform, shape = RasterReader._read_netcdf(file_path)
+            try:
+                raster = RasterReader._read_netcdf(file_path, resolution)
+            except Exception as e:
+                logger.error("Error reading NetCDF file: %s", e)
+                raise e
             logger.info("NetCDF file read successfully: %s", file_path)
-            return data, geotransform, shape
+            return raster
         elif file_path.suffix.lower() in ['.tif', '.tiff']:
             logger.info("Reading GeoTIFF file: %s", file_path)
-            data, geotransform, shape = RasterReader._read_geotiff(file_path)
+            try:
+                raster = RasterReader._read_geotiff(file_path, resolution)
+            except Exception as e:
+                logger.error("Error reading GeoTIFF file: %s", e)
+                raise e
             logger.info("GeoTIFF file read successfully: %s", file_path)
-            return data, geotransform, shape
+            return raster
         else:
             logger.error("Unsupported file format: %s", file_path.suffix)
             raise ValueError(f"Unsupported file format: {file_path.suffix}")
 
     @staticmethod
-    def _read_netcdf(file_path: Path) -> Tuple[np.ndarray, tuple, tuple]:
+    def _read_netcdf(file_path: Path, resolution: float = 0.5) -> Raster:
         """
         Read NetCDF file
 
         Args:
             file_path: Path to NetCDF file
-
+            resolution: Resolution in degrees
         Returns:
-            (data, geotransform, shape): Data array, geotransform parameters and shape
+            Raster object
         """
         with xr.open_dataset(file_path) as ds:
             # Get first data variable
@@ -67,24 +103,21 @@ class RasterReader:
                 lat = ds['lat'].values
                 lon = ds['lon'].values
                 if len(lat) > 1 and len(lon) > 1:
-                    lat_res = abs(lat[1] - lat[0])
-                    lon_res = abs(lon[1] - lon[0])
-                    # Create simple geotransform (top_left_x, x_res, 0, top_left_y, 0, y_res)
-                    geotransform = (lon.min() - lon_res/2, lon_res, 0, 
-                                  lat.max() + lat_res/2, 0, -lat_res)
+                    geotransform = (lon.min() - resolution/2, resolution, 0,
+                                  lat.max() + resolution/2, 0, -resolution)
 
-            return data, geotransform, data.shape
+            return Raster(data, geotransform, resolution)
 
     @staticmethod
-    def _read_geotiff(file_path: Path) -> Tuple[np.ndarray, tuple, tuple]:
+    def _read_geotiff(file_path: Path, resolution: float = 0.5) -> Raster:
         """
         Read GeoTIFF file using GDAL
 
         Args:
             file_path: Path to GeoTIFF file
-
+            resolution: Resolution in degrees
         Returns:
-            (data, geotransform, shape): Data array, geotransform parameters and shape
+            Raster object
         """
         dataset = gdal.Open(str(file_path))
         if dataset is None:
@@ -95,19 +128,16 @@ class RasterReader:
 
         # Read data
         if dataset.RasterCount == 1:
-            # Single band
             band = dataset.GetRasterBand(1)
             data = band.ReadAsArray()
         else:
-            # Multi-band, read as (height, width, bands)
             data = np.zeros((dataset.RasterYSize, dataset.RasterXSize, dataset.RasterCount))
             for i in range(dataset.RasterCount):
                 band = dataset.GetRasterBand(i + 1)
                 data[:, :, i] = band.ReadAsArray()
 
-        shape = data.shape
         dataset = None  # Close dataset
-        return data, geotransform, shape
+        return Raster(data, geotransform, resolution)
 
     @staticmethod
     def get_valid_mask(data: np.ndarray) -> np.ndarray:

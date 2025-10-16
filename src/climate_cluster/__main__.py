@@ -13,8 +13,15 @@ Usage:
 Example with custom parameters:
     python -m src.climate_cluster --sample-k 5 --confidence 0.75 --output results/
 """
+import logging
+import datetime
+from .processor import main
 
-import sys
-from pathlib import Path
-from typing import List
-from .processor import run_complete_climate_clustering
+logging.basicConfig(
+    level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename=f'logs/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+    filemode='a'
+)
+
+if __name__ == "__main__":
+    main()
