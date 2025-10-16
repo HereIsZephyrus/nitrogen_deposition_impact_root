@@ -1,0 +1,38 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "debug whole project",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src"
+        },
+        {
+            "name": "debug global_simulation module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.global_simulation"
+        },
+        {
+            "name": "debug N_impact_soil module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.n_impact_soil"
+        },
+        {
+            "name": "debug climate_cluster module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.climate_cluster"
+        },
+        {
+            "name": "debug biomass_relationship module",
+            "type": "debugpy",
+            "request": "launch",
+            "module": "src.biomass_relationship"
+        }
+    ]
+}
