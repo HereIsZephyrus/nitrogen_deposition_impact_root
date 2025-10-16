@@ -34,3 +34,9 @@ munkres==1.1.4
 tornado==6.5.2
 slicer==0.0.8
 unicodedata2==16.0.0
+annotated-types==0.7.0
+pydantic==2.12.2
+pydantic-core==2.41.4
+typing-extensions==4.15.0
+typing-inspection==0.4.2
+xarray==2025.10.1

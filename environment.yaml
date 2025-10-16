@@ -7,6 +7,7 @@ dependencies:
   - _libgcc_mutex=0.1=conda_forge
   - _openmp_mutex=4.5=2_gnu
   - alsa-lib=1.2.14=hb9d3cd8_0
+  - annotated-types=0.7.0=pyhd8ed1ab_1
   - blosc=1.21.6=he440d0b_1
   - brotli=1.1.0=hb03c661_4
   - brotli-bin=1.1.0=hb03c661_4
@@ -139,6 +140,8 @@ dependencies:
   - proj=9.7.0=hb72c0af_0
   - pthread-stubs=0.4=hb9d3cd8_1002
   - py-xgboost=3.0.5=cuda129_pyh3031c10_1
+  - pydantic=2.12.2=pyh3cfb1c2_0
+  - pydantic-core=2.41.4=py312h868fb18_0
   - pyparsing=3.2.5=pyhcf101f3_0
   - pyside6=6.9.3=py312h9da60e5_1
   - python=3.12.12=hfe2f287_0_cpython
@@ -164,12 +167,15 @@ dependencies:
   - tk=8.6.13=noxft_hd72426e_102
   - tornado=6.5.2=py312h4c3975b_1
   - tqdm=4.67.1=pyhd8ed1ab_1
+  - typing-extensions=4.15.0=h396c80c_0
+  - typing-inspection=0.4.2=pyhd8ed1ab_0
   - typing_extensions=4.15.0=pyhcf101f3_0
   - tzdata=2025b=h78e105d_0
   - unicodedata2=16.0.0=py312h4c3975b_1
   - uriparser=0.9.8=hac33072_0
   - wayland=1.24.0=h3e06ad9_0
   - wheel=0.45.1=pyhd8ed1ab_1
+  - xarray=2025.10.1=pyhd8ed1ab_0
   - xcb-util=0.4.1=h4f16b4b_2
   - xcb-util-cursor=0.1.5=hb9d3cd8_0
   - xcb-util-image=0.4.0=hb711507_2
