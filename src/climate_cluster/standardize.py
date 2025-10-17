@@ -65,15 +65,17 @@ class Standardizer:
         if raw_data.shape[0] != self.dimension:
             raise ValueError(f"Input data length ({len(raw_data)}) does not match expected dimension ({self.dimension})")
 
-        # if raw_data is 2D
-        if len(raw_data.shape) != 3:
+        if len(raw_data.shape) == 2:
+            mean_reshaped = self.mean.reshape(-1, 1)  # (dim, 1)
+            std_reshaped = self.std.reshape(-1, 1)   # (dim, 1)
+            standardized_data = (raw_data - mean_reshaped) / std_reshaped
+        elif len(raw_data.shape) == 3:
+            mean_reshaped = self.mean.reshape(-1, 1, 1)  # (dim, 1, 1)
+            std_reshaped = self.std.reshape(-1, 1, 1)   # (dim, 1, 1)
+            standardized_data = (raw_data - mean_reshaped) / std_reshaped
+        else:
             raise ValueError(f"Input data shape ({raw_data.shape}) is not expected (dim, x, y), please check the input data")
 
-        mean_reshaped = self.mean.reshape(-1, 1, 1)  # (dim, 1, 1)
-        std_reshaped = self.std.reshape(-1, 1, 1)   # (dim, 1, 1)
-        standardized_data = (raw_data - mean_reshaped) / std_reshaped
-
-        logger.info("Standardization complete, output shape: %s", standardized_data.shape)
         return standardized_data
 
     def _create_land_mask(self, reference_raster: Raster) -> None:

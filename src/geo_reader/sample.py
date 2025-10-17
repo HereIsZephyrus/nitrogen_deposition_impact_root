@@ -36,7 +36,7 @@ def sample_raster(raster: Raster, points: List[Tuple[float, float]]) -> np.ndarr
         logger.error("Cannot compute inverse geotransform")
         return None
 
-    n_bands = raster.data.shape
+    n_bands = raster.data.shape[0]
     n_points = len(points)
     sampled_values = np.full((n_points, n_bands), np.nan, dtype=np.float32)
 

@@ -12,8 +12,14 @@ logger = logging.getLogger(__name__)
 def stack_rasters(raster_list: List[Raster]) -> Raster:
     """
     Stack rasters into a single raster
+    
+    Args:
+        raster_list: List of Raster objects
+
+    Returns:
+        Raster object with stacked data
     """
-    stacked_data = np.concatenate([raster.data for raster in raster_list], axis=0)
+    stacked_data = np.stack([raster.data for raster in raster_list], axis=0)
     return Raster(stacked_data, raster_list[0].geotransform, raster_list[0].resolution)
 
 def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sample_file: str):
@@ -29,6 +35,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
     """
     dim = len(ClimateVariance.model_fields)
     raster_list = [RasterReader.read_file(file_path=os.path.join(climate_dir, tif_file), resolution=0.5) for tif_file in os.listdir(climate_dir)]
+    raster_list = [raster for raster in raster_list if raster is not None]
     stacked_raster = stack_rasters(raster_list)
     sample_data = get_sample_data(sample_file, stacked_raster)
 

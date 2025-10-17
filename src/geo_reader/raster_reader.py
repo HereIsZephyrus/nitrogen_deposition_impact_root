@@ -74,8 +74,8 @@ class RasterReader:
             logger.info("GeoTIFF file read successfully: %s", file_path)
             return raster
         else:
-            logger.error("Unsupported file format: %s", file_path.suffix)
-            raise ValueError(f"Unsupported file format: {file_path.suffix}")
+            logger.warning("Unsupported file format: %s", file_path.suffix)
+            return None
 
     @staticmethod
     def _read_netcdf(file_path: Path, resolution: float = 0.5) -> Raster:

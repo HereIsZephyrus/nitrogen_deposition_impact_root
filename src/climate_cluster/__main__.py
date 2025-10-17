@@ -24,7 +24,7 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--sample-k", type=int, required=True)
     args.add_argument("--confidence", type=float, required=True)
-    args.add_argument("--result", type=str, required=True)
+    args.add_argument("--output", type=str, required=True)
     args.add_argument("--climate", type=str, required=True)
     args.add_argument("--sample", type=str, required=True)
     args = args.parse_args()
@@ -32,10 +32,8 @@ if __name__ == "__main__":
         raise ValueError("sample_k is required")
     if args.confidence is None:
         raise ValueError("confidence is required")
-    if args.mask is None:
-        raise ValueError("mask is required")
-    if args.result is None:
-        raise ValueError("result is required")
+    if args.output is None:
+        raise ValueError("output is required")
     if args.climate is None:
         raise ValueError("climate is required")
     if args.sample is None:
@@ -43,7 +41,7 @@ if __name__ == "__main__":
     main(
         sample_k=args.sample_k,
         confidence=args.confidence,
-        output_dir=args.result,
+        output_dir=args.output,
         climate_dir=args.climate,
         sample_file=args.sample
     )
