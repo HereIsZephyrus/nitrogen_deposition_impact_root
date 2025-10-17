@@ -58,3 +58,8 @@ def sample_raster(raster: Raster, points: List[Tuple[float, float]]) -> np.ndarr
             logger.warning("Point %d (%.6f, %.6f) -> pixel (%d, %d) is out of bounds", i, mx, my, px, py)
 
     return sampled_values
+
+def get_sample_data(sample_file: str, raster_list: List[Raster]) -> np.ndarray:
+    samples = Sample(sample_file)
+    sample_locations = samples.get_location()
+    return sample_locations

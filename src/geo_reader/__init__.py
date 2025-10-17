@@ -1,10 +1,11 @@
 from .raster_reader import RasterReader, Raster
 from .vector_reader import create_mask_location
-from .sample import sample_raster
+from .sample_reader import Sample, get_sample_data
 
 __all__ = [
     'RasterReader',
     'Raster',
     'create_mask_location',
-    'sample_raster'
+    'Sample',
+    'get_sample_data'
 ]

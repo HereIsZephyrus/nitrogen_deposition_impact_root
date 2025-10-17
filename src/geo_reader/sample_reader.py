@@ -9,7 +9,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-class SampleReader:
+class Sample:
     """
     Reader for sample data CSV files
 
@@ -53,12 +53,12 @@ class SampleReader:
             logger.error("Error loading sample file: %s", e)
             raise
 
-    def get_location(self) -> List[Tuple[float, float]]:
+    def get_location(self) -> List[Tuple[float, float, int]]:
         """
-        Get sample locations as (longitude, latitude) tuples
+        Get sample locations as (longitude, latitude, year) tuples
 
         Returns:
-            List of (longitude, latitude) coordinate tuples
+            List of (longitude, latitude, year) coordinate tuples
         """
         if self._data is None:
             return []
@@ -68,12 +68,13 @@ class SampleReader:
             try:
                 lon = float(row['longitude'])
                 lat = float(row['latitude'])
-                if not np.isnan(lon) and not np.isnan(lat):
-                    locations.append((lon, lat))
+                year = int(row['treatment_date'])
+                if not np.isnan(lon) and not np.isnan(lat) and not np.isnan(year):
+                    locations.append((lon, lat, year))
                 else:
-                    logger.warning("Invalid coordinates in row %s", row.get('data_id', 'unknown'))
+                    logger.warning("Invalid coordinates or year in row %s", row.get('data_id', 'unknown'))
             except (ValueError, KeyError) as e:
-                logger.warning("Error parsing coordinates: %s", e)
+                logger.warning("Error parsing coordinates or year: %s", e)
                 continue
 
         logger.info("Extracted %d valid locations", len(locations))
