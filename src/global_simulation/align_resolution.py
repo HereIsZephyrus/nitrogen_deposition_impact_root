@@ -22,7 +22,7 @@ class ResolutionAligner:
     def align(self, raster: Raster) -> Raster:
         if raster.resolution == self.target_resolution:
             return raster
-        
+
         if raster.resolution > self.target_resolution:
             return self._downsample(raster)
         else:

@@ -7,6 +7,7 @@ from math import floor
 import numpy as np
 from osgeo import gdal
 from .raster_reader import Raster
+from .sample_reader import Sample
 
 logger = logging.getLogger(__name__)
 
@@ -35,31 +36,29 @@ def sample_raster(raster: Raster, points: List[Tuple[float, float]]) -> np.ndarr
         logger.error("Cannot compute inverse geotransform")
         return None
 
-    height, width, n_bands = raster.data.shape
+    n_bands = raster.data.shape
     n_points = len(points)
     sampled_values = np.full((n_points, n_bands), np.nan, dtype=np.float32)
 
-    # Sample each point
-    for i, (mx, my) in enumerate(points):
-        # Convert from map coordinates to pixel coordinates using GDAL
+    px_list = []
+    py_list = []
+    for (mx, my) in points:
         px, py = gdal.ApplyGeoTransform(gt_reverse, mx, my)
         px = int(floor(px))  # x pixel (column)
         py = int(floor(py))  # y pixel (row)
+        px_list.append(px)
+        py_list.append(py)
 
-        # Check if pixel is within bounds
-        if 0 <= py < height and 0 <= px < width:
-            if n_bands == 1:
-                # Single band raster
-                sampled_values[i, 0] = raster.data[py, px]
-            else:
-                # Multi-band raster
-                sampled_values[i, :] = raster.data[py, px, :]
-        else:
-            logger.warning("Point %d (%.6f, %.6f) -> pixel (%d, %d) is out of bounds", i, mx, my, px, py)
-
+    sampled_values = raster.data[:, py_list, px_list]
     return sampled_values
 
-def get_sample_data(sample_file: str, raster_list: List[Raster]) -> np.ndarray:
+def get_sample_data(sample_file: str, raster: Raster) -> np.ndarray:
+    """
+    raster shape in (dim, x, y)
+    """
     samples = Sample(sample_file)
     sample_locations = samples.get_location()
-    return sample_locations
+    # sample in raster
+    sample_data = sample_raster(raster, sample_locations)
+
+    return sample_data

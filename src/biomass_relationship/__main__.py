@@ -2,6 +2,8 @@
 Biomass Relationship Statistical Analysis Framework
 Modular statistical framework based on XGBoost notebook
 """
+import matplotlib
+matplotlib.use('Agg')
 import logging
 import datetime
 from .processor import main

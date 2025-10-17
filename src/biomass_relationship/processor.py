@@ -925,13 +925,6 @@ def main():
     """
     Main entry point for biomass relationship analysis
     """
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-    # Set paths
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     sample_data_path = os.path.join(project_root, 'data', 'sample.csv')
     soil_impact_data_path = os.path.join(project_root, 'data', 'soil_change_nitrogen.csv')

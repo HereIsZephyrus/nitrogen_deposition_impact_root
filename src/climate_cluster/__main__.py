@@ -7,7 +7,7 @@ It processes climate data through standardization, sample clustering then global
 and secondary clustering steps.
 
 Example with custom parameters:
-    python -m src.climate_cluster --sample-k 5 --confidence 0.80 --mask ./data/mask.shp --output ./results/ --climate ./climate/ --sample ./sample.csv
+    python -m src.climate_cluster --sample-k 5 --confidence 0.80 --output ./results/ --climate ./climate/ --sample ./sample.csv
 """
 import logging
 import datetime
@@ -24,7 +24,6 @@ if __name__ == "__main__":
     args = argparse.ArgumentParser()
     args.add_argument("--sample-k", type=int, required=True)
     args.add_argument("--confidence", type=float, required=True)
-    args.add_argument("--mask", type=str, required=True)
     args.add_argument("--result", type=str, required=True)
     args.add_argument("--climate", type=str, required=True)
     args.add_argument("--sample", type=str, required=True)
@@ -44,7 +43,6 @@ if __name__ == "__main__":
     main(
         sample_k=args.sample_k,
         confidence=args.confidence,
-        mask_file_path=args.mask,
         output_dir=args.result,
         climate_dir=args.climate,
         sample_file=args.sample
