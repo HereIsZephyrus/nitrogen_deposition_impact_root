@@ -1,10 +1,38 @@
+import os
 import logging
 import numpy as np
 from typing import Tuple, Dict, Any
 from scipy.stats import chi2
 from scipy.linalg import det, inv
-import warnings
 
+logger = logging.getLogger(__name__)
+
+class ClusterResult:
+    """
+    Cluster result class
+    """
+    def __init__(self, labels: np.ndarray, confident_mask: np.ndarray):
+        self.labels = labels
+        self.confident_mask = confident_mask
+
+    def save(self, output_dir: str):
+        """
+        Save cluster result to output directory
+        """
+        np.save(os.path.join(output_dir, 'labels.npy'), self.labels)
+        np.save(os.path.join(output_dir, 'confident_mask.npy'), self.confident_mask)
+
+    def exclude(self, data: np.ndarray) -> np.ndarray:
+        """
+        Exclude data that is not confident
+
+        Args:
+            data: Input data (N, d)
+
+        Returns:
+            Excluded data (N, d)
+        """
+        return data[self.confident_mask]
 
 class GMMCluster:
     """
@@ -12,19 +40,21 @@ class GMMCluster:
     Supports confidence-based classification and AIC model selection
     """
 
-    def __init__(self, n_components: int, max_iter: int = 100, tol: float = 1e-6, 
+    def __init__(self, n_components: int, confidence: float, max_iter: int = 100, tol: float = 1e-6,
                  random_state: int = 42, n_init: int = 10):
         """
         Initialize GMM clustering
 
         Args:
             n_components: Number of mixture components (K)
+            confidence: Confidence threshold for classification
             max_iter: Maximum number of EM iterations
             tol: Convergence tolerance (epsilon in equation 9)
             random_state: Random seed for reproducibility
             n_init: Number of random initializations
         """
         self.K = n_components
+        self.confidence = confidence
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
@@ -258,7 +288,7 @@ class GMMCluster:
 
         return self._e_step(X)
 
-    def predict(self, X: np.ndarray) -> np.ndarray:
+    def predict(self, X: np.ndarray) -> ClusterResult:
         """
         Predict cluster labels (hard clustering)
 
@@ -269,9 +299,11 @@ class GMMCluster:
             Cluster labels (N,)
         """
         probabilities = self.predict_proba(X)
-        return np.argmax(probabilities, axis=1)
+        labels = np.argmax(probabilities, axis=1)
+        confident_mask = np.max(probabilities, axis=1) >= self.confidence
+        return ClusterResult(labels, confident_mask)
 
-    def predict_with_confidence(self, X: np.ndarray, confidence_threshold: float = 0.8) -> Tuple[np.ndarray, np.ndarray]:
+    def predict_with_confidence(self, X: np.ndarray, confidence_threshold: float = 0.8) -> ClusterResult:
         """
         Predict with confidence threshold
 
@@ -280,14 +312,14 @@ class GMMCluster:
             confidence_threshold: Minimum confidence for classification (eta)
 
         Returns:
-            (labels, confident_mask): Labels and mask indicating confident predictions
+            ClusterResult: Cluster result
         """
         probabilities = self.predict_proba(X)
         labels = np.argmax(probabilities, axis=1)
         max_probabilities = np.max(probabilities, axis=1)
         confident_mask = max_probabilities >= confidence_threshold
 
-        return labels, confident_mask
+        return ClusterResult(labels, confident_mask)
 
     def mahalanobis_distance(self, X: np.ndarray, cluster_id: int) -> np.ndarray:
         """

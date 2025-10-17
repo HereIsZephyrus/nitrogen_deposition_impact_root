@@ -26,7 +26,10 @@
             "name": "debug climate_cluster module",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.climate_cluster"
+            "module": "src.climate_cluster",
+            "args": [
+                "--sample-k 5 --confidence 0.80 --mask ./data/mask.shp --output ./results/ --climate ./climate/ --sample ./sample.csv"
+            ]
         },
         {
             "name": "debug biomass_relationship module",
