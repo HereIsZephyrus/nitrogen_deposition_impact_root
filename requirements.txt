@@ -40,3 +40,15 @@ pydantic-core==2.41.4
 typing-extensions==4.15.0
 typing-inspection==0.4.2
 xarray==2025.10.1
+brotli-python==1.1.0
+certifi==2025.10.5
+cffi==2.0.0
+charset-normalizer==3.4.4
+h2==4.3.0
+hpack==4.1.0
+hyperframe==6.1.0
+idna==3.11
+pycparser==2.22
+pysocks==1.7.1
+requests==2.32.5
+zstandard==0.25.0

@@ -9,9 +9,21 @@ Example with custom parameters:
     python -m src.n_impact_soil --control-folder ./data/ --n-addition 100 --n-type N
 """
 import os
+import logging
+import datetime
 import argparse
 from .processor import predict_soil_change
 from .calculator import SoilCalculator
+
+logger = logging.getLogger(__name__)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    filename=f'logs/{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.log',
+    filemode='a'
+)
+
 
 def main(control_folder: str, input_N_addition: float, input_N_type: str):
     """

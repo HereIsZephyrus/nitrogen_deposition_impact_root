@@ -5,6 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Download hensen dataset",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "src/global_simulation/download_hensen.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--output ./data/global_forest_data/",
+                "--workers 10"
+            ]
+        },
+        {
             "name": "debug whole project",
             "type": "debugpy",
             "request": "launch",
