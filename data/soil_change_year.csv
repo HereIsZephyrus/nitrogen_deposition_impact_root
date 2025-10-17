@@ -1,0 +1,13 @@
+indicator,unit,year_1_mean,year_1_se,year_1_sig,year_2_mean,year_2_se,year_2_sig,year_3_mean,year_3_se,year_3_sig
+soil_ph,unitless,7.12,0.06,c,7.04,0.06,b,6.92,0.06,a
+microbial_biomass_nitrogen,μg/g,66.89,6.85,b,68.8,8.9,b,63.42,6.36,a
+ammonification_rate,μg·g⁻¹·month⁻¹,13.79,0.32,b,12.54,0.3,b,11.36,0.27,a
+nitrification_rate,μg·g⁻¹·month⁻¹,9.52,0.25,b,8.8,0.23,b,7.59,0.19,a
+nitrogen_mineralization_rate,μg·g⁻¹·month⁻¹,23.31,0.56,b,21.34,0.52,b,18.95,0.46,a
+ammonium_nitrogen,μg/g,7.11,0.19,c,6.47,0.13,b,5.27,0.15,a
+nitrate_nitrogen,μg/g,4.34,0.11,c,3.86,0.12,b,3.54,0.1,a
+inorganic_nitrogen,μg/g,11.44,0.29,c,10.33,0.23,b,8.81,0.24,a
+total_nitrogen,g/kg,1.65,0.17,a,1.9,0.21,b,1.79,0.2,b
+ammonium_leaching,μg/g,1.65,0.1,a,2.14,0.14,b,2.5,0.15,c
+nitrate_leaching,μg/g,2.85,0.14,a,3.83,0.19,b,4.54,0.23,c
+inorganic_nitrogen_leaching,μg/g,4.49,0.24,a,5.97,0.32,b,7.04,0.38,c
