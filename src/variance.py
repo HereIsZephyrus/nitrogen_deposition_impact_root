@@ -2,15 +2,35 @@
 Variance models for environmental data based on sample CSV structure
 """
 from pydantic import BaseModel, Field
-from typing import Optional
-
 
 class ClimateVariance(BaseModel):
     """
-    Climate variance data - precipitation and temperature
+    Climate variance data based on WorldClim bioclimatic variables (BIO1-BIO19)
+    Reference: https://worldclim.org/data/bioclim.html
     """
-    p: float = Field(..., description="Precipitation (mm/yr)")
-    ta: float = Field(..., description="Average temperature (℃)")
+    bio1: float = Field(..., description="BIO1: Annual Mean Temperature (℃)")
+    bio12: float = Field(..., description="BIO12: Annual Precipitation (mm)")
+
+    bio2: float = Field(..., description="BIO2: Mean Diurnal Range (℃)")
+    bio3: float = Field(..., description="BIO3: Isothermality (BIO2/BIO7 × 100)")
+    bio4: float = Field(..., description="BIO4: Temperature Seasonality (standard deviation × 100)")
+    bio5: float = Field(..., description="BIO5: Max Temperature of Warmest Month (℃)")
+    bio6: float = Field(..., description="BIO6: Min Temperature of Coldest Month (℃)")
+    bio7: float = Field(..., description="BIO7: Temperature Annual Range (BIO5-BIO6) (℃)")
+
+    bio8: float = Field(..., description="BIO8: Mean Temperature of Wettest Quarter (℃)")
+    bio9: float = Field(..., description="BIO9: Mean Temperature of Driest Quarter (℃)")
+    bio10: float = Field(..., description="BIO10: Mean Temperature of Warmest Quarter (℃)")
+    bio11: float = Field(..., description="BIO11: Mean Temperature of Coldest Quarter (℃)")
+
+    bio13: float = Field(..., description="BIO13: Precipitation of Wettest Month (mm)")
+    bio14: float = Field(..., description="BIO14: Precipitation of Driest Month (mm)")
+    bio15: float = Field(..., description="BIO15: Precipitation Seasonality (Coefficient of Variation)")
+    bio16: float = Field(..., description="BIO16: Precipitation of Wettest Quarter (mm)")
+    bio17: float = Field(..., description="BIO17: Precipitation of Driest Quarter (mm)")
+    bio18: float = Field(..., description="BIO18: Precipitation of Warmest Quarter (mm)")
+    bio19: float = Field(..., description="BIO19: Precipitation of Coldest Quarter (mm)")
+    elevation: float = Field(..., description="Elevation (m)")
 
 
 class SoilVariance(BaseModel):

@@ -15,12 +15,11 @@ class Raster:
     """
     Raster data class
     """
-    def __init__(self, file_path: str, data: np.ndarray, geotransform: tuple, resolution: float = 0.5):
+    def __init__(self, data: np.ndarray, geotransform: tuple, resolution: float = 0.5):
         """
         Initialize raster data
 
         Args:
-            file_path: File path
             data: Data array
             geotransform: Geotransform parameters
             resolution: Resolution in degrees
@@ -28,7 +27,6 @@ class Raster:
         self.data = data
         self.geotransform = geotransform
         self.resolution = resolution
-        self.file_path = file_path
 
     def update_data(self, data: np.ndarray) -> None:
         """
@@ -76,8 +74,8 @@ class RasterReader:
             logger.info("GeoTIFF file read successfully: %s", file_path)
             return raster
         else:
-            logger.error("Unsupported file format: %s", file_path.suffix)
-            raise ValueError(f"Unsupported file format: {file_path.suffix}")
+            logger.warning("Unsupported file format: %s", file_path.suffix)
+            return None
 
     @staticmethod
     def _read_netcdf(file_path: Path, resolution: float = 0.5) -> Raster:
@@ -98,6 +96,11 @@ class RasterReader:
                 raise ValueError(f"No data variables found in NetCDF file {file_path}")
 
             data = ds[data_vars[0]].values
+            
+            if hasattr(ds[data_vars[0]], '_FillValue'):
+                fill_value = getattr(ds[data_vars[0]], '_FillValue')
+                data = np.where(data == fill_value, np.nan, data)
+            data = np.where(np.isnan(data), np.nan, data)
 
             # Try to get geographic coordinate information
             geotransform = None
@@ -108,7 +111,7 @@ class RasterReader:
                     geotransform = (lon.min() - resolution/2, resolution, 0,
                                   lat.max() + resolution/2, 0, -resolution)
 
-            return Raster(file_path, data, geotransform, resolution)
+            return Raster(data, geotransform, resolution)
 
     @staticmethod
     def _read_geotiff(file_path: Path, resolution: float = 0.5) -> Raster:
@@ -131,15 +134,22 @@ class RasterReader:
         # Read data
         if dataset.RasterCount == 1:
             band = dataset.GetRasterBand(1)
+            nodata_value = band.GetNoDataValue()
             data = band.ReadAsArray()
+            if nodata_value is not None:
+                data = np.where(data == nodata_value, np.nan, data)
         else:
-            data = np.zeros((dataset.RasterYSize, dataset.RasterXSize, dataset.RasterCount))
+            data = np.zeros((dataset.RasterCount, dataset.RasterYSize, dataset.RasterXSize)) # shape: (dim, x, y)
             for i in range(dataset.RasterCount):
                 band = dataset.GetRasterBand(i + 1)
-                data[:, :, i] = band.ReadAsArray()
+                nodata_value = band.GetNoDataValue()
+                band_data = band.ReadAsArray() # shape: (dim, x, y)
+                if nodata_value is not None:
+                    band_data = np.where(band_data == nodata_value, np.nan, band_data)
+                data[i,:, :] = band_data
 
         dataset = None  # Close dataset
-        return Raster(file_path, data, geotransform, resolution)
+        return Raster(data, geotransform, resolution)
 
     @staticmethod
     def get_valid_mask(data: np.ndarray) -> np.ndarray:

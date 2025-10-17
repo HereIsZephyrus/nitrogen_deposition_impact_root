@@ -53,12 +53,12 @@ class Sample:
             logger.error("Error loading sample file: %s", e)
             raise
 
-    def get_location(self) -> List[Tuple[float, float, int]]:
+    def get_location(self) -> List[Tuple[float, float]]:
         """
-        Get sample locations as (longitude, latitude, year) tuples
+        Get sample locations as (longitude, latitude) tuples
 
         Returns:
-            List of (longitude, latitude, year) coordinate tuples
+            List of (longitude, latitude) coordinate tuples
         """
         if self._data is None:
             return []
@@ -68,9 +68,8 @@ class Sample:
             try:
                 lon = float(row['longitude'])
                 lat = float(row['latitude'])
-                year = int(row['treatment_date'])
-                if not np.isnan(lon) and not np.isnan(lat) and not np.isnan(year):
-                    locations.append((lon, lat, year))
+                if not np.isnan(lon) and not np.isnan(lat):
+                    locations.append((lon, lat))
                 else:
                     logger.warning("Invalid coordinates or year in row %s", row.get('data_id', 'unknown'))
             except (ValueError, KeyError) as e:

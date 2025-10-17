@@ -5,14 +5,14 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Download hensen dataset",
+            "name": "download hensen dataset",
             "type": "debugpy",
             "request": "launch",
             "program": "src/global_simulation/download_hensen.py",
             "console": "integratedTerminal",
             "args": [
-                "--output ./data/global_forest_data/",
-                "--workers 10"
+                "--output", "./data/hensen",
+                "--workers", "10"
             ]
         },
         {
@@ -33,7 +33,9 @@
             "request": "launch",
             "module": "src.n_impact_soil",
             "args": [
-                "--control-folder ./data/ --n-addition 100 --n-type N"
+                "--control-folder", "./data/",
+                "--n-addition", "100",
+                "--n-type", "N"
             ]
         },
         {
@@ -42,7 +44,12 @@
             "request": "launch",
             "module": "src.climate_cluster",
             "args": [
-                "--sample-k 5 --confidence 0.80 --mask ./data/mask.shp --output ./results/ --climate ./climate/ --sample ./data/sample.csv"
+                "--sample-k", "5",
+                "--confidence", "0.80",
+                "--mask", "./data/mask.shp",
+                "--output", "./results/",
+                "--climate", "./climate/",
+                "--sample", "./data/sample.csv"
             ]
         },
         {

@@ -1,4 +1,5 @@
 import os
+import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from tqdm import tqdm
@@ -65,7 +66,6 @@ def download_layer(layer, output_root='global_forest_data', max_workers=5):
     print(f"Completed {layer}: {success_count}/{len(urls)} tiles downloaded successfully.")
 
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser(description="Download Hansen Global Forest Change dataset v1.7 (2000-2019)")
     parser.add_argument('--output',
                         help="Root output directory (default: global_forest_data)")
