@@ -107,7 +107,7 @@ class Standardizer:
 
         Args:
             data: Input raster object
-            
+
         Returns:
             Land points data as numpy array with shape (valid_locations, bands)
         """
@@ -124,7 +124,7 @@ class Standardizer:
     def _reshape_raster_data(self, input_data: List[Raster]) -> np.ndarray:
         """
         Reshape to one dimension by stacking locations
- 
+
         Args:
             input_data: List of raster objects, each with shape (height, width, bands)
 

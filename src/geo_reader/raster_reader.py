@@ -15,11 +15,12 @@ class Raster:
     """
     Raster data class
     """
-    def __init__(self, data: np.ndarray, geotransform: tuple, resolution: float = 0.5):
+    def __init__(self, file_path: str, data: np.ndarray, geotransform: tuple, resolution: float = 0.5):
         """
         Initialize raster data
 
         Args:
+            file_path: File path
             data: Data array
             geotransform: Geotransform parameters
             resolution: Resolution in degrees
@@ -27,6 +28,7 @@ class Raster:
         self.data = data
         self.geotransform = geotransform
         self.resolution = resolution
+        self.file_path = file_path
 
     def update_data(self, data: np.ndarray) -> None:
         """
@@ -106,7 +108,7 @@ class RasterReader:
                     geotransform = (lon.min() - resolution/2, resolution, 0,
                                   lat.max() + resolution/2, 0, -resolution)
 
-            return Raster(data, geotransform, resolution)
+            return Raster(file_path, data, geotransform, resolution)
 
     @staticmethod
     def _read_geotiff(file_path: Path, resolution: float = 0.5) -> Raster:
@@ -137,7 +139,7 @@ class RasterReader:
                 data[:, :, i] = band.ReadAsArray()
 
         dataset = None  # Close dataset
-        return Raster(data, geotransform, resolution)
+        return Raster(file_path, data, geotransform, resolution)
 
     @staticmethod
     def get_valid_mask(data: np.ndarray) -> np.ndarray:
