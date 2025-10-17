@@ -1,0 +1,13 @@
+indicator,unit,rainy_season_mean,rainy_season_se,rainy_season_sig,winter_mean,winter_se,winter_sig,summer_mean,summer_se,summer_sig
+soil_ph,unitless,6.78,0.04,a,7.03,0.04,b,7.26,0.03,c
+microbial_biomass_nitrogen,μg/g,55.37,7.21,a,65.59,6.33,b,78.16,8.78,c
+ammonification_rate,μg·g⁻¹·month⁻¹,18.88,0.26,c,9.7,0.19,b,8.76,0.17,a
+nitrification_rate,μg·g⁻¹·month⁻¹,13.34,0.2,c,6.8,0.15,b,5.9,0.12,a
+nitrogen_mineralization_rate,μg·g⁻¹·month⁻¹,32.22,0.45,c,16.5,0.33,b,14.66,0.27,a
+ammonium_nitrogen,μg/g,4.22,0.1,a,6.39,0.12,b,8.24,0.16,c
+nitrate_nitrogen,μg/g,2.6,0.05,a,3.77,0.06,b,5.36,0.11,c
+inorganic_nitrogen,μg/g,6.83,0.13,a,10.16,0.18,b,13.6,0.24,c
+total_nitrogen,g/kg,2.49,0.31,c,1.7,0.2,b,1.15,0.07,a
+ammonium_leaching,μg/g,4.42,0.09,c,1.61,0.06,b,0.26,0.01,a
+nitrate_leaching,μg/g,6.99,0.14,c,3.58,0.08,b,0.64,0.02,a
+inorganic_nitrogen_leaching,μg/g,11.41,0.22,c,5.19,0.13,b,0.9,0.02,a

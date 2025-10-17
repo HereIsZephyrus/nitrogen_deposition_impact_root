@@ -20,7 +20,10 @@
             "name": "debug N_impact_soil module",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.n_impact_soil"
+            "module": "src.n_impact_soil",
+            "args": [
+                "--control-folder ./data/ --n-addition 100 --n-type N"
+            ]
         },
         {
             "name": "debug climate_cluster module",
