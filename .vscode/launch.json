@@ -28,7 +28,7 @@
             "request": "launch",
             "module": "src.climate_cluster",
             "args": [
-                "--sample-k 5 --confidence 0.80 --mask ./data/mask.shp --output ./results/ --climate ./climate/ --sample ./sample.csv"
+                "--sample-k 5 --confidence 0.80 --mask ./data/mask.shp --output ./results/ --climate ./climate/ --sample ./data/sample.csv"
             ]
         },
         {
