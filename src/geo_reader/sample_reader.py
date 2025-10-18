@@ -55,7 +55,8 @@ class Sample:
 
     def get_location(self) -> List[Tuple[float, float]]:
         """
-        Get sample locations as (longitude, latitude) tuples
+        Get sample locations as (longitude, latitude) tuples, deduplicated by group
+        (only the first location for each group ID is returned)
 
         Returns:
             List of (longitude, latitude) coordinate tuples
@@ -64,19 +65,29 @@ class Sample:
             return []
 
         locations = []
+        seen_groups = set()
+
         for _, row in self._data.iterrows():
             try:
+                # Check if group column exists and get group id
+                if 'group' in self._data.columns:
+                    group_id = int(row['group'])
+                    if group_id in seen_groups:
+                        continue  # Skip this row if we've already seen this group
+                    seen_groups.add(group_id)
+
                 lon = float(row['longitude'])
                 lat = float(row['latitude'])
                 if not np.isnan(lon) and not np.isnan(lat):
                     locations.append((lon, lat))
                 else:
-                    logger.warning("Invalid coordinates or year in row %s", row.get('data_id', 'unknown'))
+                    logger.warning("Invalid coordinates in row %s", row.get('data_id', 'unknown'))
             except (ValueError, KeyError) as e:
-                logger.warning("Error parsing coordinates or year: %s", e)
+                logger.warning("Error parsing coordinates or group: %s", e)
                 continue
 
-        logger.info("Extracted %d valid locations", len(locations))
+        logger.info("Extracted %d unique group locations (original: %d records)", 
+                   len(locations), len(self._data))
         return locations
 
     def get_soil(self) -> np.ndarray:
