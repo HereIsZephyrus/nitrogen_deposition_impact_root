@@ -1,10 +1,11 @@
+import os
 import logging
+import warnings
 from typing import Tuple, Dict, Any, Optional
 import numpy as np
 from scipy.stats import chi2
 from scipy.linalg import det, inv
 import pandas as pd
-import warnings
 
 try:
     from mpi4py import MPI
@@ -28,6 +29,7 @@ class ClusterResult:
         Save cluster result to output directory as csv and print quality metrics
         """
         # Save clustering labels and confidence mask
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         pd.DataFrame({'labels': self.labels, "confident_mask": self.confident_mask}).to_csv(output_path, index=True)
         logger.info(f"Cluster results saved to: {output_path}")
 
@@ -643,9 +645,30 @@ class GMMCluster:
 
         return info
 
-def select_optimal_k_with_aic(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
+def select_optimal_k_with_aic(X: np.ndarray, k_range: range, use_mpi: bool = False, **gmm_params) -> Tuple[int, Dict[int, float]]:
     """
     Select optimal number of components using AIC criterion
+
+    Args:
+        X: Input data (N, d)
+        k_range: Range of K values to test
+        use_mpi: Whether to use MPI parallelization. Defaults to False.
+        **gmm_params: Additional parameters for GMMCluster
+
+    Returns:
+        (optimal_k, aic_scores): Best K and AIC scores for all tested K values
+    """
+    if use_mpi and MPI_AVAILABLE:
+        return _select_optimal_k_with_aic_mpi(X, k_range, **gmm_params)
+    else:
+        if use_mpi and not MPI_AVAILABLE:
+            logger.warning("MPI not available, falling back to serial execution")
+        return _select_optimal_k_with_aic_serial(X, k_range, **gmm_params)
+
+
+def _select_optimal_k_with_aic_serial(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
+    """
+    Serial version of optimal K selection using AIC criterion
 
     Args:
         X: Input data (N, d)
@@ -668,3 +691,90 @@ def select_optimal_k_with_aic(X: np.ndarray, k_range: range, **gmm_params) -> Tu
     logger.info(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
 
     return optimal_k, aic_scores
+
+
+def _select_optimal_k_with_aic_mpi(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
+    """
+    MPI parallel version of optimal K selection using AIC criterion
+
+    Args:
+        X: Input data (N, d)
+        k_range: Range of K values to test
+        **gmm_params: Additional parameters for GMMCluster
+
+    Returns:
+        (optimal_k, aic_scores): Best K and AIC scores for all tested K values
+
+    Notes:
+        - Each MPI process will compute AIC for a subset of K values
+        - Results are gathered to rank 0 for final selection
+        - All processes will receive the same optimal_k and aic_scores
+    """
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    # Convert range to list for easier distribution
+    k_list = list(k_range)
+
+    # Distribute K values across processes
+    # Each process gets approximately len(k_list)/size values
+    k_per_process = len(k_list) // size
+    remainder = len(k_list) % size
+
+    # Calculate start and end indices for this process
+    if rank < remainder:
+        start_idx = rank * (k_per_process + 1)
+        end_idx = start_idx + k_per_process + 1
+    else:
+        start_idx = rank * k_per_process + remainder
+        end_idx = start_idx + k_per_process
+
+    local_k_values = k_list[start_idx:end_idx]
+
+    if rank == 0:
+        logger.info(f"MPI parallel execution with {size} processes")
+        logger.info(f"Total K values to test: {len(k_list)}")
+
+    # Each process computes AIC for its assigned K values
+    local_aic_scores = {}
+    for k in local_k_values:
+        logger.info(f"[Rank {rank}] Testing K = {k}...")
+        try:
+            gmm = GMMCluster(n_components=k, **gmm_params)
+            gmm.fit(X)
+            aic = gmm.calculate_aic()
+            local_aic_scores[k] = aic
+            logger.info(f"[Rank {rank}] K = {k}, AIC = {aic:.4f}")
+        except Exception as e:
+            logger.error(f"[Rank {rank}] Error computing K = {k}: {e}")
+            local_aic_scores[k] = np.inf  # Use infinity for failed computations
+
+    # Gather all results to rank 0
+    all_aic_scores = comm.gather(local_aic_scores, root=0)
+
+    # Rank 0 combines results and finds optimal K
+    if rank == 0:
+        # Merge all dictionaries
+        aic_scores = {}
+        for scores_dict in all_aic_scores:
+            aic_scores.update(scores_dict)
+
+        # Find optimal K
+        valid_scores = {k: v for k, v in aic_scores.items() if np.isfinite(v)}
+        if not valid_scores:
+            raise ValueError("All K values resulted in invalid AIC scores")
+
+        optimal_k = min(valid_scores.keys(), key=lambda k: valid_scores[k])
+        logger.info("=" * 60)
+        logger.info(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
+        logger.info("=" * 60)
+
+        result = (optimal_k, aic_scores)
+    else:
+        result = None
+
+    # Broadcast result to all processes
+    result = comm.bcast(result, root=0)
+
+    return result

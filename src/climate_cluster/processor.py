@@ -51,7 +51,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
         random_state=42,
         n_init=50,
         max_covariance_det=8.0,
-        min_cluster_separation=0.8,
+        min_cluster_separation=0.4,
         max_mean_mahalanobis=4.0
     )
     sample_cluster.fit(standardized_sample)
@@ -88,7 +88,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
         "random_state": 42,
         "n_init": 10,
         "max_covariance_det": 8.0,
-        "min_cluster_separation": 0.8,
+        "min_cluster_separation": 0.6,
         "max_mean_mahalanobis": 4.0
     }
     besk_k = select_optimal_k_with_aic(res_data, k_range=range(4, 10), **global_gmm_params)

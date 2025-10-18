@@ -11,7 +11,7 @@
             "program": "src/global_simulation/download_hensen.py",
             "console": "integratedTerminal",
             "args": [
-                "--output", "./data/hensen",
+                "--output", "/mnt/warehouse/hensen",
                 "--workers", "10"
             ]
         },
@@ -44,11 +44,10 @@
             "request": "launch",
             "module": "src.climate_cluster",
             "args": [
-                "--sample-k", "5",
+                "--sample-k", "2",
                 "--confidence", "0.80",
-                "--mask", "./data/mask.shp",
                 "--output", "./results/",
-                "--climate", "./climate/",
+                "--climate", "/mnt/repo/ndata/wcbio210s/",
                 "--sample", "./data/sample.csv"
             ]
         },
