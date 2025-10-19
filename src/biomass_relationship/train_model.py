@@ -133,9 +133,7 @@ class ModelTrainer:
         models = [
             LinearModel(),
             AdditiveModel(),
-            MultiplicativeModel(),
             MichaelisMentenModel(),
-            ExponentialModel('v1'),
             ExponentialModel('v2')
         ]
 
@@ -523,12 +521,12 @@ class ModelTrainer:
 
     def _plot_nls_results(self, results: Dict[str, Any]):
         """Visualize NLS results"""
-        fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+        fig, axes = plt.subplots(2, 2, figsize=(15, 15))
         fig.suptitle(f'第{self.group}组气候类型样本的多元回归模型比较')
         axes = axes.flatten()
 
         for idx, (model_name, result) in enumerate(results.items()):
-            if idx >= 6:
+            if idx >= 4:
                 break
 
             cv_res = result['cv_results']

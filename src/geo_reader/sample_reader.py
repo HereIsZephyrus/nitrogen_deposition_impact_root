@@ -277,6 +277,69 @@ class Sample:
 
         return n_biomass, ck_biomass
 
+    def get_biomass_normalized_by_group(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get root biomass data (N addition and control) normalized by group
+
+        For each group, the mean and standard deviation of the combined n_biomass and ck_biomass are calculated,
+        and then the data in each group is normalized by z-score.
+
+        Returns:
+            Tuple of (normalized_n_biomass, normalized_ck_biomass) arrays
+        """
+        if self._data is None:
+            return np.array([]), np.array([])
+
+        n_col = 'root_biomass_n_addation'
+        ck_col = 'root_biomass_ck'
+
+        if n_col not in self._data.columns or ck_col not in self._data.columns:
+            logger.warning("Biomass columns not found in dataset")
+            return np.array([]), np.array([])
+
+        if 'group' not in self._data.columns:
+            logger.warning("Group column not found in dataset")
+            return np.array([]), np.array([])
+
+        data_with_groups = self._data[['group', n_col, ck_col]].copy()
+
+        # Convert to numeric type
+        data_with_groups[n_col] = pd.to_numeric(data_with_groups[n_col], errors='coerce')
+        data_with_groups[ck_col] = pd.to_numeric(data_with_groups[ck_col], errors='coerce')
+
+        if len(data_with_groups) == 0:
+            logger.warning("No valid biomass data after removing NaN values")
+            return np.array([]), np.array([])
+
+        normalized_n = np.full(len(data_with_groups), np.nan)
+        normalized_ck = np.full(len(data_with_groups), np.nan)
+
+        for group_id in data_with_groups['group'].unique():
+            group_mask = data_with_groups['group'] == group_id
+            group_data = data_with_groups[group_mask]
+
+            n_values = group_data[n_col].values
+            ck_values = group_data[ck_col].values
+            combined_values = np.concatenate([n_values, ck_values])
+
+            group_mean = np.mean(combined_values)
+            group_std = np.std(combined_values, ddof=1)
+
+            if group_std == 0:
+                logger.warning("Standard deviation is 0 for group %s, using z-score = 0", group_id)
+                group_std = 1
+
+            group_indices = np.where(group_mask)[0]
+            normalized_n[group_indices] = (n_values - group_mean) / group_std
+            normalized_ck[group_indices] = (ck_values - group_mean) / group_std
+
+            logger.debug("Group %s: mean=%.3f, std=%.3f, n_samples=%d", 
+                        group_id, group_mean, group_std, len(group_data))
+
+        logger.info("Normalized biomass data by group: %d samples", len(normalized_n))
+
+        return normalized_n, normalized_ck
+
     def get_categorical(self) -> np.ndarray:
         """
         Get all categorical variables (fertilizer_type, treatment_date, vegetation_type)
