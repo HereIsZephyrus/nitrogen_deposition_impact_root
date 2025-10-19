@@ -33,6 +33,8 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
 
     raw_data = unpack_variance(input_var)
     raw_data = drop_nan(raw_data)
+    # Apply z-score standardization to each column
+    raw_data = (raw_data - raw_data.mean()) / raw_data.std()
     climate_group = get_climate_group(os.path.join(statistic_folder_path, 'sample_cluster_result.csv'))
 
     pca_analyzer = PCAnalyzer(
@@ -53,7 +55,6 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
     climate_group = climate_group[raw_data.index]
     total_reference_group = np.array(total_reference_group)[total_data.index]
     total_climate_group = total_climate_group[total_data.index]
-    #biomass_add, biomass_ck = total_sample.get_biomass_normalized_by_group()
     biomass_add, biomass_ck = total_sample.get_biomass()
     nitrogen_add = total_sample.get_nitrogen()
     biomass_add = biomass_add[total_data.index]
@@ -67,9 +68,12 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
     )
 
     for group in np.unique(climate_group):
-        group_biomass_add = biomass_add[total_climate_group == group]
-        group_biomass_ck = biomass_ck[total_climate_group == group]
         group_nitrogen_add = nitrogen_add[total_climate_group == group]
+        if (len(group_nitrogen_add) < 3):
+            logger.warning(f"Group {group} has less than 5 samples, skipping")
+            continue
+        group_biomass_add = np.log(biomass_add[total_climate_group == group])
+        group_biomass_ck = np.log(biomass_ck[total_climate_group == group])
         group_model_data = total_data[total_climate_group == group]
         group_categorical_data = total_categorical_data[total_climate_group == group]
         transformed_data_ck = pca_analyzer.transform(group_model_data)
@@ -93,9 +97,9 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             group = group,
             output_dir = output_dir
         )
-        trainer.train_nls(n_addtion = group_n_addtion, save_to_file = True, plot = True)
-        #trainer.train_svm(n_addtion = group_n_addtion)
-        #trainer.train_decision_tree(n_addtion = group_n_addtion)
+        #trainer.train_nls(n_addtion = group_n_addtion, alpha_l1 = 0.1, alpha_l2 = 0.02, auto_regularization = True, save_to_file = True, plot = True)
+        #trainer.train_svm(n_addtion = group_n_addtion, auto_tune = True, intensive_search = True, save_to_file = True, plot = True)
+        trainer.train_decision_tree(n_addtion = group_n_addtion)
 
 def drop_nan(raw_data: pd.DataFrame) -> pd.DataFrame:
     """

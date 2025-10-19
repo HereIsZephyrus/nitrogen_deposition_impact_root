@@ -105,7 +105,7 @@ class Variance(BaseModel):
         climate_data = self.climate.model_dump(**kwargs)
         soil_data = self.soil.model_dump(**kwargs)
         vegetation_data = self.vegetation.model_dump(**kwargs)
-        nitrogen_data = self.nitrogen.model_dump(**kwargs)
+        nitrogen_data = {'duration': self.nitrogen.duration}
 
         if only_continuous:
             # Remove categorical variables

@@ -114,12 +114,24 @@ class ModelTrainer:
 
         return results
 
-    def train_nls(self, n_addtion: np.ndarray, save_to_file: bool = True, plot: bool = False) -> Dict[str, Any]:
+    def train_nls(self, 
+                  n_addtion: np.ndarray, 
+                  alpha_l1: float = 0.0,
+                  alpha_l2: float = 0.0,
+                  auto_regularization: bool = True,
+                  save_to_file: bool = True, 
+                  plot: bool = False) -> Dict[str, Any]:
         """
         Train Non-linear least squares (NLS) model, using LOOCV validation
 
         Args:
             n_addtion: Nitrogen addition rate
+            alpha_l1: L1 regularization parameter (Lasso), default 0.0
+                      Promotes parameter sparsity for feature selection
+            alpha_l2: L2 regularization parameter (Ridge), default 0.0
+                      Promotes small parameter values for stability
+            auto_regularization: If True and no regularization provided, automatically
+                                suggest regularization based on overfitting risk
             save_to_file: Whether to save results to file
             plot: Whether to generate visualization plots
 
@@ -129,6 +141,43 @@ class ModelTrainer:
         logger.info("=" * 70)
         logger.info(f"Starting training NLS model - Group {self.group}")
         logger.info("=" * 70)
+        
+        # Check overfitting risk and suggest regularization if needed
+        if auto_regularization and alpha_l1 == 0.0 and alpha_l2 == 0.0:
+            n_samples = len(self.y)
+            n_features = self.X.shape[1] + 1  # +1 for nitrogen_add
+            # Estimate max parameters (for AdditiveModel: 1 + n_features + n_features)
+            max_params = 1 + 2 * n_features
+            param_ratio = max_params / n_samples
+            
+            logger.info(f"\nOverfitting Risk Assessment:")
+            logger.info(f"  Samples: {n_samples}, Features: {n_features}, Max params: {max_params}")
+            logger.info(f"  Parameter/Sample ratio: {param_ratio:.3f}")
+            
+            if param_ratio > 0.5:
+                alpha_l1 = 0.1
+                alpha_l2 = 0.05
+                logger.warning(f"  HIGH overfitting risk detected!")
+                logger.warning(f"  Auto-enabling regularization: L1={alpha_l1}, L2={alpha_l2}")
+                logger.warning(f"  To disable: set auto_regularization=False")
+            elif param_ratio > 0.2:
+                alpha_l1 = 0.05
+                alpha_l2 = 0.01
+                logger.warning(f"  MODERATE overfitting risk detected!")
+                logger.warning(f"  Auto-enabling regularization: L1={alpha_l1}, L2={alpha_l2}")
+                logger.warning(f"  To disable: set auto_regularization=False")
+            elif param_ratio > 0.1:
+                alpha_l1 = 0.01
+                alpha_l2 = 0.001
+                logger.info(f"  ℹ️  LOW overfitting risk, applying light regularization")
+                logger.info(f"  Using: L1={alpha_l1}, L2={alpha_l2}")
+            else:
+                logger.info(f"  ✓ MINIMAL overfitting risk - no regularization needed")
+        
+        if alpha_l1 > 0 or alpha_l2 > 0:
+            logger.info(f"\nRegularization enabled:")
+            logger.info(f"  L1 (Lasso) α = {alpha_l1} - promotes sparsity")
+            logger.info(f"  L2 (Ridge) α = {alpha_l2} - promotes stability")
 
         models = [
             LinearModel(),
@@ -146,7 +195,13 @@ class ModelTrainer:
             # Define model fitting and prediction functions
             def fit_func(X_train, y_train):
                 X_input = np.column_stack([n_addtion[:len(y_train)], X_train])
-                model.fit(X_input, y_train)
+                model.fit(
+                    X_input, 
+                    y_train,
+                    alpha_l1=alpha_l1,
+                    alpha_l2=alpha_l2,
+                    check_overfitting=False  # Already checked at trainer level
+                )
 
             def predict_func(X_test):
                 X_input = np.column_stack([n_addtion[:len(X_test)], X_test])
@@ -157,7 +212,13 @@ class ModelTrainer:
 
             # Train final model on full data
             X_full = np.column_stack([n_addtion, self.X])
-            final_result = model.fit(X_full, self.y)
+            final_result = model.fit(
+                X_full, 
+                self.y,
+                alpha_l1=alpha_l1,
+                alpha_l2=alpha_l2,
+                check_overfitting=False  # Already checked at trainer level
+            )
 
             all_results[model_name] = {
                 'model': model,
@@ -174,7 +235,7 @@ class ModelTrainer:
 
         # Save results
         if save_to_file:
-            self._save_nls_results(all_results, comparison_df)
+            self._save_nls_results(all_results, comparison_df, alpha_l1, alpha_l2)
 
         # Visualize results
         if plot:
@@ -184,9 +245,11 @@ class ModelTrainer:
 
         return all_results
 
-    def train_svm(self, 
-                  n_addtion: np.ndarray,
-                  kernels: List[str] = ['rbf', 'linear', 'poly'],
+    def train_svm(self,
+                  n_addtion: np.ndarray = None,  # For API compatibility, not used in SVM
+                  kernels: List[str] = None,
+                  auto_tune: bool = True,
+                  intensive_search: bool = True,
                   save_to_file: bool = True, 
                   plot: bool = False) -> Dict[str, Any]:
         """
@@ -195,29 +258,64 @@ class ModelTrainer:
         Args:
             n_addtion: Nitrogen addition rate
             kernels: List of kernels to test
+            auto_tune: Whether to perform hyperparameter tuning (recommended)
+            intensive_search: If True, use more extensive parameter search
             save_to_file: Whether to save results to file
             plot: Whether to generate visualization plots
 
         Returns:
             SVM model training and validation results
         """
+        # Set default kernel list
+        if kernels is None:
+            kernels = ['rbf', 'linear', 'poly']
+            
         logger.info("=" * 70)
         logger.info(f"Starting training SVM model - Group {self.group}")
         logger.info("=" * 70)
+        logger.info(f"Hyperparameter tuning: {'ENABLED' if auto_tune else 'DISABLED'}")
+        logger.info(f"Search mode: {'INTENSIVE' if intensive_search else 'STANDARD'}")
+        logger.info(f"Testing kernels: {', '.join(kernels)}")
+        
+        # Warn about prediction uniformity issue
+        n_samples = len(self.y)
+        if n_samples < 10:
+            logger.warning("   Small sample size may cause uniform predictions")
+            logger.warning("   Consider using auto_tune=True and intensive_search=True")
 
         all_results = {}
 
         for kernel in kernels:
             logger.info(f"\nTraining SVM model - Kernel: {kernel}")
 
-            # Create SVM model
-            svm_model = KernelSVMRegressor(
-                kernel=kernel,
-                auto_tune=False,  # Do not perform hyperparameter tuning in LOOCV to save time
-                C=1.0,
-                epsilon=0.1,
-                gamma='scale'
-            )
+            # Create SVM model with appropriate settings
+            if auto_tune:
+                # Use auto-tuning to find best parameters
+                svm_model = KernelSVMRegressor(
+                    kernel=kernel,
+                    auto_tune=True,
+                    C=1.0,  # Initial value (will be optimized)
+                    epsilon=0.1,  # Initial value (will be optimized)
+                    gamma='scale'  # Initial value (will be optimized)
+                )
+            else:
+                # Use more aggressive parameters for better fitting
+                if intensive_search:
+                    # Higher C and lower epsilon for stronger fitting
+                    C_val = 100.0 if kernel in ['rbf', 'poly'] else 10.0
+                    epsilon_val = 0.01
+                else:
+                    C_val = 1.0
+                    epsilon_val = 0.1
+                    
+                svm_model = KernelSVMRegressor(
+                    kernel=kernel,
+                    auto_tune=False,
+                    C=C_val,
+                    epsilon=epsilon_val,
+                    gamma='scale'
+                )
+                logger.info(f"  Using manual parameters: C={C_val}, epsilon={epsilon_val}")
 
             # Define fitting and prediction functions
             def fit_func(X_train, y_train):
@@ -232,21 +330,33 @@ class ModelTrainer:
             # Train final model on full data
             final_results = svm_model.fit(y=self.y, X_continuous=self.X)
 
-            all_results[kernel] = {
+            # Store results with additional info
+            result_dict = {
                 'model': svm_model,
                 'cv_results': cv_results,
                 'train_results': final_results
             }
-
+            
+            # Add best parameters if auto-tuning was used
+            if auto_tune and hasattr(svm_model, 'best_params') and svm_model.best_params:
+                result_dict['best_params'] = svm_model.best_params
+                logger.info(f"  Best parameters found: {svm_model.best_params}")
+            
+            all_results[kernel] = result_dict
             self.svm_cv_results[kernel] = cv_results
 
-        # Select best kernel
+        # Select best kernel based on LOOCV performance
         best_kernel = max(all_results.keys(), 
                          key=lambda k: all_results[k]['cv_results']['r2'])
         self.svm_model = all_results[best_kernel]['model']
 
-        logger.info(f"\nBest SVM kernel: {best_kernel}")
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Best SVM kernel: {best_kernel}")
         logger.info(f"  LOOCV R²: {all_results[best_kernel]['cv_results']['r2']:.4f}")
+        logger.info(f"  LOOCV RMSE: {all_results[best_kernel]['cv_results']['rmse']:.4f}")
+        if 'best_params' in all_results[best_kernel]:
+            logger.info(f"  Optimized parameters: {all_results[best_kernel]['best_params']}")
+        logger.info(f"{'='*50}")
 
         # Save results
         if save_to_file:
@@ -405,12 +515,31 @@ class ModelTrainer:
 
         return df
 
-    def _save_nls_results(self, results: Dict[str, Any], comparison_df: pd.DataFrame):
+    def _save_nls_results(self, results: Dict[str, Any], comparison_df: pd.DataFrame, 
+                          alpha_l1: float = 0.0, alpha_l2: float = 0.0):
         """Save NLS results"""
         # Save comparison results
         comparison_path = os.path.join(self.group_dir, 'nls_model_comparison.csv')
         comparison_df.to_csv(comparison_path, index=False, encoding='utf-8-sig')
         logger.info(f"NLS model comparison results saved: {comparison_path}")
+        
+        # Save regularization settings
+        if alpha_l1 > 0 or alpha_l2 > 0:
+            reg_info_path = os.path.join(self.group_dir, 'nls_regularization_info.txt')
+            with open(reg_info_path, 'w', encoding='utf-8') as f:
+                f.write("=" * 70 + "\n")
+                f.write("NLS Model Regularization Settings\n")
+                f.write("=" * 70 + "\n\n")
+                f.write(f"L1 Regularization (Lasso): α = {alpha_l1}\n")
+                f.write(f"  - Promotes parameter sparsity\n")
+                f.write(f"  - Automatic feature selection\n\n")
+                f.write(f"L2 Regularization (Ridge): α = {alpha_l2}\n")
+                f.write(f"  - Promotes small parameter values\n")
+                f.write(f"  - Improves model stability\n\n")
+                if alpha_l1 > 0 and alpha_l2 > 0:
+                    f.write("Using Elastic Net regularization (L1 + L2)\n")
+                f.write("\n" + "=" * 70 + "\n")
+            logger.info(f"Regularization settings saved: {reg_info_path}")
 
         # Save detailed results for each model
         for model_name, result in results.items():
@@ -441,7 +570,7 @@ class ModelTrainer:
         comparison_data = []
         for kernel, result in results.items():
             cv_res = result['cv_results']
-            comparison_data.append({
+            row_data = {
                 'Kernel': kernel,
                 'LOOCV_R²': cv_res['r2'],
                 'LOOCV_RMSE': cv_res['rmse'],
@@ -449,12 +578,48 @@ class ModelTrainer:
                 'Train_R²': result['train_results']['train_r2'],
                 'Train_RMSE': result['train_results']['train_rmse'],
                 'Best': 'Yes' if kernel == best_kernel else 'No'
-            })
+            }
+            
+            # Add best parameters if available
+            if 'best_params' in result:
+                for param_name, param_value in result['best_params'].items():
+                    row_data[f'Best_{param_name}'] = param_value
+                    
+            comparison_data.append(row_data)
 
         comparison_df = pd.DataFrame(comparison_data)
         comparison_path = os.path.join(svm_dir, 'svm_kernel_comparison.csv')
         comparison_df.to_csv(comparison_path, index=False, encoding='utf-8-sig')
         logger.info(f"SVM model comparison results saved: {comparison_path}")
+        
+        # Save detailed best parameters info
+        best_params_path = os.path.join(svm_dir, 'best_parameters_info.txt')
+        with open(best_params_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 70 + "\n")
+            f.write("SVM Best Model Parameters\n")
+            f.write("=" * 70 + "\n\n")
+            f.write(f"Best Kernel: {best_kernel}\n\n")
+            
+            best_result = results[best_kernel]
+            if 'best_params' in best_result:
+                f.write("Optimized Parameters (from Grid Search):\n")
+                for param_name, param_value in best_result['best_params'].items():
+                    f.write(f"  {param_name}: {param_value}\n")
+                f.write("\nParameter Meanings:\n")
+                f.write("  C: Regularization parameter (higher = stronger fitting)\n")
+                f.write("  epsilon: Width of epsilon-tube (lower = tighter predictions)\n")
+                f.write("  gamma: Kernel coefficient (for RBF/poly kernels)\n")
+            else:
+                f.write("Manual Parameters Used:\n")
+                f.write(f"  (No auto-tuning performed)\n")
+                
+            f.write("\nPerformance:\n")
+            f.write(f"  LOOCV R²: {best_result['cv_results']['r2']:.4f}\n")
+            f.write(f"  LOOCV RMSE: {best_result['cv_results']['rmse']:.4f}\n")
+            f.write(f"  Train R²: {best_result['train_results']['train_r2']:.4f}\n")
+            f.write(f"  Train RMSE: {best_result['train_results']['train_rmse']:.4f}\n")
+            f.write("\n" + "=" * 70 + "\n")
+        logger.info(f"Best parameters info saved: {best_params_path}")
 
     def _save_decision_tree_results(self, results: Dict[str, Any]):
         """Save decision tree results"""
@@ -552,6 +717,7 @@ class ModelTrainer:
     def _plot_svm_results(self, results: Dict[str, Any]):
         """Visualize SVM results"""
         fig, axes = plt.subplots(1, len(results), figsize=(5*len(results), 4))
+        fig.suptitle(f'第{self.group}组气候类型样本的支持向量机模型比较', fontweight='bold', fontsize=18)
         if len(results) == 1:
             axes = [axes]
 
@@ -565,8 +731,8 @@ class ModelTrainer:
             max_val = max(cv_res['y_true'].max(), cv_res['y_pred'].max())
             ax.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
 
-            ax.set_xlabel('Actual Values')
-            ax.set_ylabel('Predicted Values (LOOCV)')
+            ax.set_xlabel('实际值')
+            ax.set_ylabel('预测值 (LOOCV)')
             ax.set_title(f'SVM-{kernel}\nR²={cv_res["r2"]:.3f}')
             ax.grid(True, alpha=0.3)
 

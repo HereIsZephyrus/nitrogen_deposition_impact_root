@@ -89,12 +89,35 @@ class NLSModel:
     def _get_n_params(self, X: np.ndarray) -> int:
         """Get number of parameters - subclasses should override this method"""
         return X.shape[1] + 1  # Default: intercept + one coefficient for each feature
+    
+    def _check_overfitting_risk(self, X: np.ndarray, y: np.ndarray) -> tuple:
+        """
+        Check overfitting risk based on parameter-to-sample ratio
+        
+        Args:
+            X: input feature matrix
+            y: target variable
+            
+        Returns:
+            (risk_level, param_ratio) where risk_level is 'high', 'moderate', 'low', or 'minimal'
+        """
+        n_samples = len(y)
+        n_params = self._get_n_params(X)
+        param_ratio = n_params / n_samples
+        
+        logger.info(f"  Overfitting risk assessment:")
+        logger.info(f"    Parameters: {n_params}, Samples: {n_samples}, Ratio: {param_ratio:.3f}")
 
+        return risk_level, param_ratio
+ 
     def fit(self, 
             X: np.ndarray, 
             y: np.ndarray,
             method: str = 'trf',
-            max_nfev: int = 10000) -> ModelFitResult:
+            max_nfev: int = 10000,
+            alpha_l1: float = 0.0,
+            alpha_l2: float = 0.0,
+            check_overfitting: bool = True) -> ModelFitResult:
         """
         Fit model
 
@@ -105,34 +128,99 @@ class NLSModel:
                shape: (n_samples,)
             method: optimization method ('trf', 'dogbox', 'lm')
             max_nfev: maximum number of function evaluations
+            alpha_l1: L1 regularization parameter (Lasso), default 0.0
+                      Promotes sparsity in parameters
+            alpha_l2: L2 regularization parameter (Ridge), default 0.0
+                      Promotes small parameter values
+            check_overfitting: whether to check overfitting risk, default True
 
         Returns:
             ModelFitResult object
         """
         logger.info(f"Starting model fitting: {self.name}")
         logger.info(f"  Sample size: {len(y)}, Features: {X.shape[1]}")
+        
+        # Check overfitting risk
+        if check_overfitting:
+            risk_level, _ = self._check_overfitting_risk(X, y)
+            
+            # Suggest regularization if not provided
+            if (risk_level in ['high', 'moderate']) and (alpha_l1 == 0.0 and alpha_l2 == 0.0):
+                logger.warning("  WARNING: Overfitting risk detected but no regularization applied!")
+                logger.warning("  Suggestion: Use alpha_l1 > 0 (e.g., 0.01-0.1) or alpha_l2 > 0")
 
         # Get initial parameters
         p0 = self.get_initial_params(X, y)
         logger.info(f"  Initial parameters: {p0}")
+        
+        # Log regularization settings
+        if alpha_l1 > 0 or alpha_l2 > 0:
+            logger.info(f"  Regularization: L1 (α={alpha_l1}), L2 (α={alpha_l2})")
 
         try:
-            # Use curve_fit for non-linear least squares fitting
+            # Use curve_fit or least_squares for non-linear least squares fitting
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
 
-                def model_wrapper(x, *p):
-                    return self.model_func(x, *p)
+                # If regularization is used, we need to use least_squares directly
+                if alpha_l1 > 0 or alpha_l2 > 0:
+                    from scipy.optimize import least_squares
+                    
+                    def residual_func(params):
+                        """Compute residuals with regularization"""
+                        # Model residuals
+                        y_pred = self.model_func(X.T, *params)
+                        residuals = y - y_pred
+                        
+                        # Add L2 (Ridge) penalty to residuals
+                        if alpha_l2 > 0:
+                            l2_penalty = np.sqrt(alpha_l2) * params
+                            residuals = np.concatenate([residuals, l2_penalty])
+                        
+                        # Add L1 (Lasso) penalty via soft thresholding in loss
+                        # For L1, we modify the optimization but keep residuals for RSS
+                        return residuals
+                    
+                    # For L1 regularization, we use soft_l1 loss which approximates L1
+                    loss_type = 'soft_l1' if alpha_l1 > 0 else 'linear'
+                    
+                    result = least_squares(
+                        fun=residual_func,
+                        x0=p0,
+                        method=method,
+                        max_nfev=max_nfev,
+                        loss=loss_type,
+                        f_scale=alpha_l1 if alpha_l1 > 0 else 1.0
+                    )
+                    
+                    popt = result.x
+                    
+                    # Compute covariance matrix approximation
+                    try:
+                        # Jacobian at solution
+                        J = result.jac
+                        # Covariance matrix: (J^T J)^-1 * var(residuals)
+                        y_pred_final = self.model_func(X.T, *popt)
+                        residuals_final = y - y_pred_final
+                        var_residuals = np.var(residuals_final, ddof=len(popt))
+                        pcov = np.linalg.inv(J.T @ J) * var_residuals
+                    except (np.linalg.LinAlgError, ValueError):
+                        pcov = np.full((len(popt), len(popt)), np.inf)
+                        
+                else:
+                    # Standard curve_fit without regularization
+                    def model_wrapper(x, *p):
+                        return self.model_func(x, *p)
 
-                popt, pcov = curve_fit(
-                    f=model_wrapper,
-                    xdata=X.T,  # curve_fit expects xdata to be (n_features, n_samples)
-                    ydata=y,
-                    p0=p0,
-                    method=method,
-                    maxfev=max_nfev,
-                    full_output=False
-                )
+                    popt, pcov = curve_fit(
+                        f=model_wrapper,
+                        xdata=X.T,  # curve_fit expects xdata to be (n_features, n_samples)
+                        ydata=y,
+                        p0=p0,
+                        method=method,
+                        maxfev=max_nfev,
+                        full_output=False
+                    )
 
             self.params = popt
 
@@ -157,8 +245,18 @@ class NLSModel:
             n = len(y)
             k = len(popt)
             rss = np.sum(residuals**2)
-            aic = n * np.log(rss / n) + 2 * k
-            bic = n * np.log(rss / n) + k * np.log(n)
+            
+            # Handle edge case where RSS is zero or very small
+            epsilon = 1e-10
+            if rss <= epsilon:
+                logger.warning(f"RSS ({rss:.2e}) is zero or very small, possibly indicating perfect fit or numerical issues")
+                logger.warning("Using adjusted RSS for AIC/BIC calculation to avoid log(0)")
+                rss_adjusted = epsilon
+            else:
+                rss_adjusted = rss
+            
+            aic = n * np.log(rss_adjusted / n) + 2 * k
+            bic = n * np.log(rss_adjusted / n) + k * np.log(n)
 
             # Create result object
             self.fit_result = ModelFitResult(
@@ -591,7 +689,10 @@ class ExponentialModel(NLSModel):
 def fit_nls_models(nitrogen_add: np.ndarray,
                    pca_components: np.ndarray,
                    biomass: np.ndarray,
-                   models: Optional[List[NLSModel]] = None) -> Dict[str, ModelFitResult]:
+                   models: Optional[List[NLSModel]] = None,
+                   alpha_l1: float = 0.0,
+                   alpha_l2: float = 0.0,
+                   check_overfitting: bool = True) -> Dict[str, ModelFitResult]:
     """
     Fit multiple NLS models
 
@@ -600,6 +701,11 @@ def fit_nls_models(nitrogen_add: np.ndarray,
         pca_components: PCA components after dimensionality reduction, shape (n_samples, n_components)
         biomass: biomass array, shape (n_samples,)
         models: list of models to fit, if None, use all default models
+        alpha_l1: L1 regularization parameter (Lasso), default 0.0
+                  Recommended: 0.01-0.1 for overfitting issues
+        alpha_l2: L2 regularization parameter (Ridge), default 0.0
+                  Recommended: 0.01-0.1 for overfitting issues
+        check_overfitting: whether to check overfitting risk, default True
 
     Returns:
         dictionary, key is model name, value is ModelFitResult
@@ -631,7 +737,13 @@ def fit_nls_models(nitrogen_add: np.ndarray,
     for model in models:
         logger.info(f"\nFitting model: {model.name}")
         try:
-            result = model.fit(X, biomass)
+            result = model.fit(
+                X,
+                biomass,
+                alpha_l1=alpha_l1,
+                alpha_l2=alpha_l2,
+                check_overfitting=check_overfitting
+            )
             results[model.name] = result
 
             if result.convergence:

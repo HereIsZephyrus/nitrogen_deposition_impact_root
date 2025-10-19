@@ -243,10 +243,12 @@ class KernelSVMRegressor:
         Returns:
             Best SVR model
         """
-        # Define parameter grid
+        # Expanded parameter grid for more intensive search
+        # Higher C values = stronger fitting (less regularization)
+        # Lower epsilon values = tighter tube around predictions
         param_grid = {
-            'C': [0.1, 1, 10, 100],
-            'epsilon': [0.01, 0.1, 0.2],
+            'C': [0.01, 0.1, 1, 10, 100, 500, 1000],  # Expanded range
+            'epsilon': [0.001, 0.01, 0.05, 0.1, 0.2, 0.5],  # Expanded range
             'gamma': ['scale', 'auto', 0.001, 0.01, 0.1]
         }
 
