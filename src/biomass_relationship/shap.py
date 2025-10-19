@@ -275,8 +275,8 @@ class SHAPAnalyzer:
         plt.figure(figsize=figsize)
         plt.barh(range(len(top_features)), top_values)
         plt.yticks(range(len(top_features)), top_features)
-        plt.xlabel(f'SHAP importance ({importance_type})')
-        plt.title(f'SHAP feature importance (top {top_n} features)')
+        plt.xlabel(f'SHAP重要性 ({importance_type})')
+        plt.title(f'SHAP特征重要性 (前{top_n}个特征)', fontweight='bold', fontsize=18)
         plt.gca().invert_yaxis()
         plt.tight_layout()
 

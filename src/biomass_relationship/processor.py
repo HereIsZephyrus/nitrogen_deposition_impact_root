@@ -74,17 +74,22 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             continue
         group_biomass_add = np.log(biomass_add[total_climate_group == group])
         group_biomass_ck = np.log(biomass_ck[total_climate_group == group])
+        group_average = np.mean(
+            np.stack([group_biomass_add, group_biomass_ck]),
+            axis=0
+        )
+        group_average = (group_average - np.mean(group_average)) / np.std(group_average) # standardize average biomass
         group_model_data = total_data[total_climate_group == group]
         group_categorical_data = total_categorical_data[total_climate_group == group]
         transformed_data_ck = pca_analyzer.transform(group_model_data)
-        input_ck = np.concatenate([transformed_data_ck, group_categorical_data], axis=1)
+        input_ck = np.concatenate([transformed_data_ck, group_categorical_data, group_average.reshape(-1,1)], axis=1)
         impacted_data = n_to_soil_influencer.impact(
             group_model_data,
             group_nitrogen_add[:, 0], # addition rate
             group_nitrogen_add[:, 2], # duration
         )
         transformed_data_add = pca_analyzer.transform(impacted_data)
-        input_add = np.concatenate([transformed_data_add, group_categorical_data], axis=1)
+        input_add = np.concatenate([transformed_data_add, group_categorical_data, group_average.reshape(-1,1)], axis=1)
         group_transformed_data = np.concatenate([input_ck, input_add], axis=0)
         group_dependence = np.concatenate([group_biomass_ck, group_biomass_add], axis=0)
         group_n_addtion = np.concatenate([
@@ -97,9 +102,31 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             group = group,
             output_dir = output_dir
         )
-        #trainer.train_nls(n_addtion = group_n_addtion, alpha_l1 = 0.1, alpha_l2 = 0.02, auto_regularization = True, save_to_file = True, plot = True)
-        #trainer.train_svm(n_addtion = group_n_addtion, auto_tune = True, intensive_search = True, save_to_file = True, plot = True)
-        trainer.train_decision_tree(n_addtion = group_n_addtion)
+        trainer.train_nls(
+            n_addtion = group_n_addtion,
+            alpha_l1 = 0.1,
+            alpha_l2 = 0.02,
+            auto_regularization = True,
+            save_to_file = True,
+            plot = True
+        )
+        trainer.train_svm(
+            n_addtion = group_n_addtion,
+            auto_tune = True,
+            intensive_search = True,
+            save_to_file = True,
+            plot = True
+        )
+        trainer.train_decision_tree(
+            n_addtion = group_n_addtion, 
+            max_depth = 10, 
+            min_samples_split = 2, 
+            min_samples_leaf = 1, 
+            learning_rate = 0.1,
+            n_estimators = 100,
+            save_to_file = True, 
+            plot = True
+        )
 
 def drop_nan(raw_data: pd.DataFrame) -> pd.DataFrame:
     """

@@ -5,7 +5,7 @@
 """
 import os
 import logging
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Any
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import LeaveOneOut
@@ -18,8 +18,7 @@ from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
 from .nls.nls_model import (
     LinearModel,
-    AdditiveModel, 
-    MultiplicativeModel, 
+    AdditiveModel,
     MichaelisMentenModel,
     ExponentialModel,
 )
@@ -246,17 +245,17 @@ class ModelTrainer:
         return all_results
 
     def train_svm(self,
-                  n_addtion: np.ndarray = None,  # For API compatibility, not used in SVM
+                  n_addtion: np.ndarray,
                   kernels: List[str] = None,
                   auto_tune: bool = True,
                   intensive_search: bool = True,
                   save_to_file: bool = True, 
                   plot: bool = False) -> Dict[str, Any]:
         """
-        Train SVM regression model, using LOOCV validation
+        Train SVM regression model with nitrogen addition as a feature, using LOOCV validation
 
         Args:
-            n_addtion: Nitrogen addition rate
+            n_addtion: Nitrogen addition rate (cumulative N deposition)
             kernels: List of kernels to test
             auto_tune: Whether to perform hyperparameter tuning (recommended)
             intensive_search: If True, use more extensive parameter search
@@ -266,13 +265,18 @@ class ModelTrainer:
         Returns:
             SVM model training and validation results
         """
+        # Validate n_addition
+        if n_addtion is None or len(n_addtion) != len(self.y):
+            raise ValueError(f"n_addtion must be provided and match y length: {len(self.y)}")
+        
         # Set default kernel list
         if kernels is None:
             kernels = ['rbf', 'linear', 'poly']
             
         logger.info("=" * 70)
-        logger.info(f"Starting training SVM model - Group {self.group}")
+        logger.info(f"Starting SVM training - Group {self.group}")
         logger.info("=" * 70)
+        logger.info(f"Samples: {len(self.y)}, Features: {self.X.shape[1]} + 1 (N addition)")
         logger.info(f"Hyperparameter tuning: {'ENABLED' if auto_tune else 'DISABLED'}")
         logger.info(f"Search mode: {'INTENSIVE' if intensive_search else 'STANDARD'}")
         logger.info(f"Testing kernels: {', '.join(kernels)}")
@@ -280,17 +284,20 @@ class ModelTrainer:
         # Warn about prediction uniformity issue
         n_samples = len(self.y)
         if n_samples < 10:
-            logger.warning("   Small sample size may cause uniform predictions")
-            logger.warning("   Consider using auto_tune=True and intensive_search=True")
+            logger.warning("Small sample size may cause uniform predictions")
+            logger.warning("Consider using auto_tune=True and intensive_search=True")
 
         all_results = {}
 
         for kernel in kernels:
-            logger.info(f"\nTraining SVM model - Kernel: {kernel}")
+            logger.info(f"\n{'='*50}")
+            logger.info(f"Training SVM with kernel: {kernel}")
+            logger.info(f"{'='*50}")
 
             # Create SVM model with appropriate settings
             if auto_tune:
                 # Use auto-tuning to find best parameters
+                logger.info("Grid search enabled - searching for optimal hyperparameters...")
                 svm_model = KernelSVMRegressor(
                     kernel=kernel,
                     auto_tune=True,
@@ -315,20 +322,27 @@ class ModelTrainer:
                     epsilon=epsilon_val,
                     gamma='scale'
                 )
-                logger.info(f"  Using manual parameters: C={C_val}, epsilon={epsilon_val}")
+                logger.info(f"Manual parameters: C={C_val}, epsilon={epsilon_val}")
 
-            # Define fitting and prediction functions
+            # Define fitting and prediction functions with N addition as feature
             def fit_func(X_train, y_train):
-                svm_model.fit(y=y_train, X_continuous=X_train)
+                # Combine N addition with PCA features
+                X_input = np.column_stack([n_addtion[:len(X_train)], X_train])
+                svm_model.fit(y=y_train, X_continuous=X_input)
 
             def predict_func(X_test):
-                return svm_model.predict(X_continuous=X_test, return_weighted=False)
+                # Combine N addition with PCA features for prediction
+                X_input = np.column_stack([n_addtion[:len(X_test)], X_test])
+                return svm_model.predict(X_continuous=X_input, return_weighted=False)
 
             # LOOCV evaluation
+            logger.info("Starting LOOCV evaluation...")
             cv_results = self._loocv_evaluate(fit_func, predict_func, f"SVM-{kernel}")
 
-            # Train final model on full data
-            final_results = svm_model.fit(y=self.y, X_continuous=self.X)
+            # Train final model on full data with N addition
+            logger.info("Training final model on full dataset...")
+            X_full = np.column_stack([n_addtion, self.X])
+            final_results = svm_model.fit(y=self.y, X_continuous=X_full)
 
             # Store results with additional info
             result_dict = {
@@ -371,115 +385,180 @@ class ModelTrainer:
         return all_results
 
     def train_decision_tree(self, 
-                           save_to_file: bool = True, 
-                           plot: bool = False) -> Dict[str, Any]:
+                            n_addtion: np.ndarray,
+                            max_depth: int = 5,
+                            min_samples_split: int = 2,
+                            min_samples_leaf: int = 1,
+                            learning_rate: float = 0.1,
+                            n_estimators: int = 100,
+                            save_to_file: bool = True, 
+                            plot: bool = False) -> Dict[str, Any]:
         """
-        Train decision tree models (XGBoost and LightGBM) using LOOCV validation
+        Train decision tree models (XGBoost and LightGBM) with N addition as feature,
+        using LOOCV validation and SHAP analysis
 
         Args:
+            n_addtion: Nitrogen addition rate (cumulative N deposition)
+            max_depth: Maximum depth of the tree
+            min_samples_split: Minimum number of samples required to split an internal node
+            min_samples_leaf: Minimum number of samples required to be at a leaf node
+            learning_rate: Learning rate for gradient boosting
+            n_estimators: Number of boosting iterations
             save_to_file: Whether to save results to file
             plot: Whether to generate visualization plots
 
         Returns:
-            Decision tree model training and validation results
+            Decision tree model training and validation results with SHAP analysis
         """
+        # Validate n_addition
+        if n_addtion is None or len(n_addtion) != len(self.y):
+            raise ValueError(f"n_addtion must be provided and match y length: {len(self.y)}")
+            
         logger.info("=" * 70)
-        logger.info(f"Starting decision tree model training - Group {self.group}")
+        logger.info(f"Starting decision tree training - Group {self.group}")
         logger.info("=" * 70)
+        logger.info(f"Samples: {len(self.y)}, Features: {self.X.shape[1]} + 1 (N addition)")
+        logger.info(f"Hyperparameters: max_depth={max_depth}, learning_rate={learning_rate}, n_estimators={n_estimators}")
 
         all_results = {}
 
+        # Prepare feature names for SHAP analysis
+        feature_names = ['N_addition'] + [f'PC{i+1}' for i in range(self.X.shape[1])]
+        logger.info(f"Feature names: {feature_names}")
+
         # Train XGBoost
-        logger.info("\nTraining XGBoost model...")
+        logger.info("\n" + "="*50)
+        logger.info("Training XGBoost model...")
+        logger.info("="*50)
+        
         xgb_params = {
-            'max_depth': 5,
-            'learning_rate': 0.1,
-            'n_estimators': 100,
+            'max_depth': max_depth,
+            'min_child_weight': min_samples_leaf,  # XGBoost equivalent of min_samples_leaf
+            'learning_rate': learning_rate,
+            'n_estimators': n_estimators,
             'random_state': self.random_state,
             'verbosity': 0
         }
+        logger.info(f"XGBoost parameters: {xgb_params}")
 
         xgb_model = XGBRegressor(**xgb_params)
 
         def xgb_fit(X_train, y_train):
-            xgb_model.fit(X_train, y_train)
+            # Combine N addition with PCA features
+            X_input = np.column_stack([n_addtion[:len(X_train)], X_train])
+            xgb_model.fit(X_input, y_train)
 
         def xgb_predict(X_test):
-            return xgb_model.predict(X_test)
+            # Combine N addition with PCA features for prediction
+            X_input = np.column_stack([n_addtion[:len(X_test)], X_test])
+            return xgb_model.predict(X_input)
 
+        logger.info("Starting LOOCV evaluation for XGBoost...")
         xgb_cv_results = self._loocv_evaluate(xgb_fit, xgb_predict, "XGBoost")
 
-        # 在全数据上训练
-        xgb_model.fit(self.X, self.y)
-        y_pred_train = xgb_model.predict(self.X)
+        # Train on full dataset with N addition
+        logger.info("Training XGBoost on full dataset...")
+        X_full = np.column_stack([n_addtion, self.X])
+        xgb_model.fit(X_full, self.y)
+        y_pred_train = xgb_model.predict(X_full)
         xgb_train_r2 = r2_score(self.y, y_pred_train)
         xgb_train_rmse = np.sqrt(mean_squared_error(self.y, y_pred_train))
+        
+        logger.info(f"XGBoost training completed - Train R²: {xgb_train_r2:.4f}, RMSE: {xgb_train_rmse:.4f}")
 
         all_results['XGBoost'] = {
             'model': xgb_model,
             'cv_results': xgb_cv_results,
             'train_r2': xgb_train_r2,
-            'train_rmse': xgb_train_rmse
+            'train_rmse': xgb_train_rmse,
+            'feature_names': feature_names
         }
 
         self.xgb_model = xgb_model
         self.xgb_cv_results = xgb_cv_results
 
         # Train LightGBM
-        logger.info("\nTraining LightGBM model...")
+        logger.info("\n" + "="*50)
+        logger.info("Training LightGBM model...")
+        logger.info("="*50)
+        
         lgb_params = {
             'objective': 'regression',
             'metric': 'rmse',
             'boosting_type': 'gbdt',
             'num_leaves': 31,
-            'learning_rate': 0.1,
-            'n_estimators': 100,
+            'max_depth': max_depth,
+            'learning_rate': learning_rate,
+            'n_estimators': n_estimators,
+            'min_child_samples': min_samples_leaf,
             'random_state': self.random_state,
             'verbose': -1
         }
+        logger.info(f"LightGBM parameters: {lgb_params}")
 
         lgb_model = LGBMRegressor(**lgb_params)
 
         def lgb_fit(X_train, y_train):
-            lgb_model.fit(X_train, y_train)
+            # Combine N addition with PCA features
+            X_input = np.column_stack([n_addtion[:len(X_train)], X_train])
+            lgb_model.fit(X_input, y_train)
 
         def lgb_predict(X_test):
-            return lgb_model.predict(X_test)
+            # Combine N addition with PCA features for prediction
+            X_input = np.column_stack([n_addtion[:len(X_test)], X_test])
+            return lgb_model.predict(X_input)
 
+        logger.info("Starting LOOCV evaluation for LightGBM...")
         lgb_cv_results = self._loocv_evaluate(lgb_fit, lgb_predict, "LightGBM")
 
-        # 在全数据上训练
-        lgb_model.fit(self.X, self.y)
-        y_pred_train = lgb_model.predict(self.X)
+        # Train on full dataset with N addition
+        logger.info("Training LightGBM on full dataset...")
+        lgb_model.fit(X_full, self.y)
+        y_pred_train = lgb_model.predict(X_full)
         lgb_train_r2 = r2_score(self.y, y_pred_train)
         lgb_train_rmse = np.sqrt(mean_squared_error(self.y, y_pred_train))
+        
+        logger.info(f"LightGBM training completed - Train R²: {lgb_train_r2:.4f}, RMSE: {lgb_train_rmse:.4f}")
 
         all_results['LightGBM'] = {
             'model': lgb_model,
             'cv_results': lgb_cv_results,
             'train_r2': lgb_train_r2,
-            'train_rmse': lgb_train_rmse
+            'train_rmse': lgb_train_rmse,
+            'feature_names': feature_names
         }
 
         self.lgb_model = lgb_model
         self.lgb_cv_results = lgb_cv_results
 
         # Compare models
-        logger.info("\nDecision tree model comparison:")
-        logger.info(f"  XGBoost  - LOOCV R²: {xgb_cv_results['r2']:.4f}, RMSE: {xgb_cv_results['rmse']:.4f}")
-        logger.info(f"  LightGBM - LOOCV R²: {lgb_cv_results['r2']:.4f}, RMSE: {lgb_cv_results['rmse']:.4f}")
+        logger.info("\n" + "="*70)
+        logger.info("Decision Tree Model Comparison:")
+        logger.info("="*70)
+        logger.info(f"XGBoost  - LOOCV R²: {xgb_cv_results['r2']:.4f}, RMSE: {xgb_cv_results['rmse']:.4f}")
+        logger.info(f"LightGBM - LOOCV R²: {lgb_cv_results['r2']:.4f}, RMSE: {lgb_cv_results['rmse']:.4f}")
 
-        # SHAP analysis (optional)
-        if plot:
-            logger.info("\nPerforming SHAP feature importance analysis...")
-            self._shap_analysis(xgb_model, "XGBoost")
-            self._shap_analysis(lgb_model, "LightGBM")
+        # SHAP analysis - Always perform for decision trees
+        logger.info("\n" + "="*70)
+        logger.info("Performing SHAP Feature Importance Analysis...")
+        logger.info("="*70)
+        
+        # Prepare data for SHAP analysis
+        X_df = pd.DataFrame(X_full, columns=feature_names)
+        
+        # SHAP analysis for XGBoost
+        logger.info("\nAnalyzing XGBoost feature contributions with SHAP...")
+        xgb_shap_results = self._shap_analysis(xgb_model, "XGBoost", X_df, save_plots=save_to_file or plot)
+        all_results['XGBoost']['shap_results'] = xgb_shap_results
+        
+        # SHAP analysis for LightGBM
+        logger.info("\nAnalyzing LightGBM feature contributions with SHAP...")
+        lgb_shap_results = self._shap_analysis(lgb_model, "LightGBM", X_df, save_plots=save_to_file or plot)
+        all_results['LightGBM']['shap_results'] = lgb_shap_results
 
-        # 保存结果
         if save_to_file:
             self._save_decision_tree_results(all_results)
 
-        # 可视化
         if plot:
             self._plot_decision_tree_results(all_results)
 
@@ -622,67 +701,139 @@ class ModelTrainer:
         logger.info(f"Best parameters info saved: {best_params_path}")
 
     def _save_decision_tree_results(self, results: Dict[str, Any]):
-        """Save decision tree results"""
+        """
+        Save decision tree results including SHAP analysis
+        """
         dt_dir = os.path.join(self.group_dir, 'decision_tree')
         os.makedirs(dt_dir, exist_ok=True)
+
+        logger.info("Saving decision tree results...")
 
         # Save comparison results
         comparison_data = []
         for model_name, result in results.items():
             cv_res = result['cv_results']
-            comparison_data.append({
+            row_data = {
                 'Model': model_name,
                 'LOOCV_R²': cv_res['r2'],
                 'LOOCV_RMSE': cv_res['rmse'],
                 'LOOCV_MAE': cv_res['mae'],
                 'Train_R²': result['train_r2'],
                 'Train_RMSE': result['train_rmse']
-            })
+            }
+            
+            # Add SHAP importance for top feature if available
+            if 'shap_results' in result and 'importance_df' in result['shap_results']:
+                shap_df = result['shap_results']['importance_df']
+                if not shap_df.empty:
+                    top_feature = shap_df.iloc[0]['Feature']
+                    top_importance = shap_df.iloc[0]['SHAP_Importance']
+                    row_data['Top_Feature'] = top_feature
+                    row_data['Top_SHAP_Value'] = top_importance
+            
+            comparison_data.append(row_data)
 
         comparison_df = pd.DataFrame(comparison_data)
         comparison_path = os.path.join(dt_dir, 'decision_tree_comparison.csv')
         comparison_df.to_csv(comparison_path, index=False, encoding='utf-8-sig')
-        logger.info(f"Decision tree model comparison results saved: {comparison_path}")
+        logger.info(f"Decision tree comparison saved: {comparison_path}")
 
-        # Save feature importance
+        # Save built-in feature importance and SHAP results
         for model_name, result in results.items():
             model = result['model']
+            feature_names = result.get('feature_names', [f'PC{i+1}' for i in range(self.X.shape[1])])
+            
+            # Save built-in feature importance
             if hasattr(model, 'feature_importances_'):
                 importance_df = pd.DataFrame({
-                    'Feature': [f'PC{i+1}' for i in range(len(model.feature_importances_))],
+                    'Feature': feature_names,
                     'Importance': model.feature_importances_
                 }).sort_values('Importance', ascending=False)
 
-                importance_path = os.path.join(dt_dir, f'{model_name}_feature_importance.csv')
-                importance_df.to_csv(importance_path, index=False)
+                importance_path = os.path.join(dt_dir, f'{model_name}_builtin_importance.csv')
+                importance_df.to_csv(importance_path, index=False, encoding='utf-8-sig')
+                logger.info(f"{model_name} built-in importance saved: {importance_path}")
+            
+            # Save SHAP results summary
+            if 'shap_results' in result and 'importance_df' in result['shap_results']:
+                shap_df = result['shap_results']['importance_df']
+                if not shap_df.empty:
+                    shap_summary_path = os.path.join(dt_dir, f'{model_name}_shap_importance.csv')
+                    shap_df.to_csv(shap_summary_path, index=False, encoding='utf-8-sig')
+                    logger.info(f"{model_name} SHAP importance saved: {shap_summary_path}")
+        
+        logger.info("Decision tree results saved successfully")
 
-    def _shap_analysis(self, model, model_name: str):
-        """SHAP feature importance analysis"""
+    def _shap_analysis(self, model, model_name: str, X_df: pd.DataFrame = None, save_plots: bool = True):
+        """
+        Perform SHAP feature importance analysis for tree-based models
+        
+        Args:
+            model: Trained tree-based model (XGBoost or LightGBM)
+            model_name: Name of the model for saving results
+            X_df: Feature DataFrame with proper column names
+            save_plots: Whether to save SHAP plots
+            
+        Returns:
+            Dictionary with SHAP analysis results
+        """
         try:
+            logger.info(f"Initializing SHAP analyzer for {model_name}...")
             shap_analyzer = SHAPAnalyzer(model)
-            X_df = pd.DataFrame(self.X, columns=[f'PC{i+1}' for i in range(self.X.shape[1])])
+            
+            # Use provided X_df or create default
+            if X_df is None:
+                X_df = pd.DataFrame(self.X, columns=[f'PC{i+1}' for i in range(self.X.shape[1])])
 
+            # Create explainer for tree-based models
+            logger.info("Creating SHAP TreeExplainer...")
             shap_analyzer.create_explainer(X_df, explainer_type='tree')
+            
+            # Calculate SHAP values
+            logger.info("Calculating SHAP values...")
             shap_analyzer.calculate_shap_values(X_df)
 
-            # 保存SHAP图表
-            shap_dir = os.path.join(self.group_dir, 'shap', model_name)
-            os.makedirs(shap_dir, exist_ok=True)
-
-            # Summary plot
-            summary_path = os.path.join(shap_dir, 'shap_summary.png')
-            shap_analyzer.summary_plot(save_path=summary_path)
-
-            # Feature importance
+            # Get feature importance
             importance = shap_analyzer.get_feature_importance()
             importance_df = pd.DataFrame(list(importance.items()), 
                                         columns=['Feature', 'SHAP_Importance'])
-            importance_path = os.path.join(shap_dir, 'shap_feature_importance.csv')
-            importance_df.to_csv(importance_path, index=False)
+            importance_df = importance_df.sort_values('SHAP_Importance', ascending=False)
+            
+            logger.info(f"\nSHAP Feature Importance for {model_name}:")
+            logger.info("\n" + importance_df.to_string(index=False))
 
-            logger.info(f"SHAP analysis results for {model_name} saved to: {shap_dir}")
+            # Save results if requested
+            if save_plots:
+                shap_dir = os.path.join(self.group_dir, 'shap', model_name)
+                os.makedirs(shap_dir, exist_ok=True)
+
+                # Summary plot
+                logger.info("Generating SHAP summary plot...")
+                summary_path = os.path.join(shap_dir, 'shap_summary.png')
+                shap_analyzer.summary_plot(save_path=summary_path)
+
+                # Save feature importance CSV
+                importance_path = os.path.join(shap_dir, 'shap_feature_importance.csv')
+                importance_df.to_csv(importance_path, index=False, encoding='utf-8-sig')
+
+                logger.info(f"SHAP analysis results saved to: {shap_dir}")
+            
+            return {
+                'feature_importance': importance,
+                'importance_df': importance_df,
+                'shap_values': shap_analyzer.shap_values if hasattr(shap_analyzer, 'shap_values') else None
+            }
+            
         except Exception as e:
-            logger.warning(f"SHAP analysis failed ({model_name}): {str(e)}")
+            logger.error(f"SHAP analysis failed for {model_name}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
+            return {
+                'feature_importance': {},
+                'importance_df': pd.DataFrame(),
+                'shap_values': None,
+                'error': str(e)
+            }
 
     def _plot_nls_results(self, results: Dict[str, Any]):
         """Visualize NLS results"""
@@ -745,6 +896,7 @@ class ModelTrainer:
     def _plot_decision_tree_results(self, results: Dict[str, Any]):
         """Visualize decision tree results"""
         fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        fig.suptitle(f'第{self.group}组气候类型样本的决策树模型比较', fontweight='bold', fontsize=18)
 
         for idx, (model_name, result) in enumerate(results.items()):
             cv_res = result['cv_results']
@@ -756,8 +908,8 @@ class ModelTrainer:
             max_val = max(cv_res['y_true'].max(), cv_res['y_pred'].max())
             ax.plot([min_val, max_val], [min_val, max_val], 'r--', lw=2)
 
-            ax.set_xlabel('Actual Values')
-            ax.set_ylabel('Predicted Values (LOOCV)')
+            ax.set_xlabel('实际值')
+            ax.set_ylabel('预测值 (LOOCV)')
             ax.set_title(f'{model_name}\nR²={cv_res["r2"]:.3f}')
             ax.grid(True, alpha=0.3)
 

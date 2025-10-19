@@ -58,7 +58,7 @@
             "module": "src.biomass_relationship",
             "args": [
                 "--statistic-folder", "./data/",
-                "--output", "./results/",
+                "--output", "./results",
                 "--climate", "/mnt/repo/ndata/wcbio5m/"
             ]
         }
