@@ -21,9 +21,8 @@ from .pca import PCAnalyzer
 from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
 from ..n_impact_soil.calculator import SoilCalculator, transfer_N_input
-from ..geo_reader import load_variance
-from ..variance import Variance, unpack_variance
-
+from ..geo_reader import load_variance, Sample, calculate_dependence
+from ..variance import unpack_variance
 
 logger = logging.getLogger(__name__)
 
@@ -923,16 +922,58 @@ class BiomassRelationshipProcessor:
             'shap_results': self.shap_results
         }
 
+def drop_nan(raw_data: pd.DataFrame) -> pd.DataFrame:
+    """
+    Check and remove rows with NaN values from DataFrame
 
-def train(statistic_folder_path: str, output_dir: str):
+    Args:
+        raw_data: Input DataFrame
+
+    Returns:
+        DataFrame with NaN rows removed
+
+    Raises:
+        ValueError: If no valid samples remain after removing NaN values
+    """
+    # Check for NaN values
+    nan_counts = raw_data.isna().sum()
+    if nan_counts.any():
+        logger.warning("Found NaN values in data:")
+        nan_cols = nan_counts[nan_counts > 0]
+        for col, count in nan_cols.items():
+            logger.warning("  Column '%s': %d NaN values (%.1f%%)", 
+                          col, count, 100 * count / len(raw_data))
+
+        # Remove rows with any NaN values
+        n_before = len(raw_data)
+        raw_data = raw_data.dropna()
+        n_after = len(raw_data)
+        logger.info("Dropped %d rows with NaN values (%d -> %d samples)", 
+                   n_before - n_after, n_before, n_after)
+
+        if n_after == 0:
+            raise ValueError("No valid samples remaining after removing NaN values")
+    else:
+        logger.info("No NaN values found in data")
+
+    return raw_data
+
+def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
     """
     Main entry point for biomass relationship analysis
     """
     sample_data_path = os.path.join(statistic_folder_path, 'sample.csv')
     soil_impact_data_path = os.path.join(statistic_folder_path, 'soil_change_nitrogen.csv')
 
-    input_var = load_variance(sample_data_path)
+    unique_sample = Sample(sample_data_path, grouped=True)
+    input_var = load_variance(climate_dir=climate_dir, sample=unique_sample)
+    climate_group = get_climate_group(unique_sample)
+
+    total_sample = Sample(sample_data_path, grouped=False)
+    biomass_add, biomass_ck = total_sample.get_biomass()
+
     raw_data = unpack_variance(input_var)
+    raw_data = drop_nan(raw_data)
 
     pca_analyzer = PCAnalyzer(
         max_components=20,
@@ -941,9 +982,14 @@ def train(statistic_folder_path: str, output_dir: str):
 
     pca_analyzer.fit(raw_data)
     pca_analyzer.save(os.path.join(output_dir, 'pca_analyzer.csv'))
-    transformed_data = pca_analyzer.transform(raw_data)
+    n_to_soil_influencer = NitrogenToSoilInfluencer(soil_impact_data_path)
+
+    for group in np.unique(climate_group):
+        group_biomass_add = biomass_add[climate_group == group]
+        group_biomass_ck = biomass_ck[climate_group == group]
+        raw_group_data = raw_data[climate_group == group,:]
+        transformed_data_CK = pca_analyzer.transform(raw_group_data)
+        transformed_data_ADD = pca_analyzer.transform(n_to_soil_influencer.impact(raw_group_data))
 
 
-
-if __name__ == "__main__":
-    main()
+    return model

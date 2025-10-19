@@ -79,24 +79,21 @@ def stack_rasters(raster_list: List[Raster]) -> Raster:
     stacked_data = np.stack([raster.data for raster in raster_list], axis=0)
     return Raster(stacked_data, raster_list[0].geotransform, raster_list[0].resolution)
 
-def load_variance(climate_dir: str, sample_file: str) -> List[Variance]:
+def load_variance(climate_dir: str, sample: Sample) -> List[Variance]:
     """
     Load variance from sample file and climate raster data
 
     Args:
         climate_dir: Directory containing climate raster files (bio1-bio19, elevation)
-        sample_file: Path to sample CSV file
+        sample: Sample object
 
     Returns:
         List of Variance objects, one per sample
     """
-    # Load sample data
-    sample = Sample(sample_file)
 
     # Load and stack climate rasters
     raster_list = [
-        RasterReader.read_file(file_path=os.path.join(climate_dir, tif_file), resolution=0.5) 
-        for tif_file in sorted(os.listdir(climate_dir))
+        RasterReader.read_file(file_path=os.path.join(climate_dir, tif_file)) for tif_file in sorted(os.listdir(climate_dir))
     ]
     raster_list = [raster for raster in raster_list if raster is not None]
 
@@ -106,21 +103,24 @@ def load_variance(climate_dir: str, sample_file: str) -> List[Variance]:
 
     stacked_raster = stack_rasters(raster_list)
 
-    # Sample climate data from rasters
-    climate_data = get_sample_data(sample_file, stacked_raster)  # shape: (n_bands, n_samples)
+    # Sample climate data from rasters (deduplicated by group)
+    climate_data = get_sample_data(sample.sample_file, stacked_raster)  # shape: (n_bands, n_unique_groups)
 
-    # Get data from sample using various get methods
-    soil_data = sample.get_soil()  # shape: (n_samples, n_soil_features)
-    nitrogen_data = sample.get_nitrogen()  # shape: (n_samples, 4)
-    vegetation_data = sample.get_vegetation()  # shape: (n_samples,)
+    # Get data from sample using various get methods (all deduplicated by group)
+    soil_data = sample.get_soil()  # shape: (n_unique_groups, n_soil_features)
+    nitrogen_data = sample.get_nitrogen()  # shape: (n_unique_groups, 4)
+    vegetation_data = sample.get_vegetation()  # shape: (n_unique_groups,)
 
-    # Get number of samples
-    n_samples = len(sample)
+    # Get number of unique groups (all data is deduplicated by group)
+    n_unique_groups = climate_data.shape[1] if climate_data.ndim > 1 else len(climate_data)
+    n_total_samples = len(sample)  # Total records in CSV (before deduplication)
+
+    logger.info("Processing %d unique groups from %d total samples", n_unique_groups, n_total_samples)
 
     # Build variance list
     variance_list = []
 
-    for i in range(n_samples):
+    for i in range(n_unique_groups):
         try:
             # Extract climate data for this sample
             # Assuming climate_data has shape (n_bands, n_samples) with bands ordered as:
@@ -218,9 +218,10 @@ def load_variance(climate_dir: str, sample_file: str) -> List[Variance]:
             variance_list.append(variance)
 
         except (ValueError, IndexError, TypeError) as e:
-            logger.warning("Error creating Variance for sample %d: %s", i, e)
+            logger.warning("Error creating Variance for group %d: %s", i, e)
             continue
 
-    logger.info("Created %d Variance objects from %d samples", len(variance_list), n_samples)
+    logger.info("Created %d Variance objects from %d unique groups (%d total samples)", 
+                len(variance_list), n_unique_groups, n_total_samples)
 
     return variance_list

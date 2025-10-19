@@ -30,7 +30,7 @@ class Sample:
 
     NITROGEN_COLUMNS = ['n_addition', 'fertilizer_type', 'treatment_date', 'duration']
 
-    def __init__(self, sample_file: str):
+    def __init__(self, sample_file: str, grouped: bool = True):
         """
         Initialize sample reader
 
@@ -39,6 +39,7 @@ class Sample:
         """
         self.sample_file = sample_file
         self._data: Optional[pd.DataFrame] = None
+        self.grouped = grouped
         self._load_data()
 
     def _load_data(self) -> None:
@@ -70,7 +71,7 @@ class Sample:
         for _, row in self._data.iterrows():
             try:
                 # Check if group column exists and get group id
-                if 'group' in self._data.columns:
+                if 'group' in self._data.columns and self.grouped:
                     group_id = int(row['group'])
                     if group_id in seen_groups:
                         continue  # Skip this row if we've already seen this group
@@ -107,10 +108,17 @@ class Sample:
             logger.warning("No soil columns found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            # Keep first occurrence of each group
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Use pd.to_numeric to safely convert to float
         soil_data = []
         for col in available_cols:
-            numeric_values = pd.to_numeric(self._data[col], errors='coerce').values
+            numeric_values = pd.to_numeric(deduplicated_data[col], errors='coerce').values
             soil_data.append(numeric_values)
 
         soil_data = np.column_stack(soil_data)
@@ -139,21 +147,27 @@ class Sample:
             logger.warning("No nitrogen columns found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Process each column
         nitrogen_data = []
 
         for col in self.NITROGEN_COLUMNS:
-            if col not in self._data.columns:
+            if col not in deduplicated_data.columns:
                 logger.warning("Column %s not found, skipping", col)
                 continue
 
             if col in ['n_addition', 'duration']:
                 # Numeric columns - use pd.to_numeric with errors='coerce' to handle non-numeric values
-                numeric_values = pd.to_numeric(self._data[col], errors='coerce').values
+                numeric_values = pd.to_numeric(deduplicated_data[col], errors='coerce').values
                 nitrogen_data.append(numeric_values)
             else:
                 # Categorical columns (fertilizer_type, treatment_date)
-                cat_data = self._data[col].astype('category')
+                cat_data = deduplicated_data[col].astype('category')
                 nitrogen_data.append(cat_data.cat.codes.values.astype(float))
 
         # Stack columns
@@ -180,8 +194,14 @@ class Sample:
             logger.warning("Vegetation type column not found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Encode vegetation types as categories
-        vegetation = self._data[col_name].astype('category')
+        vegetation = deduplicated_data[col_name].astype('category')
         vegetation_codes = vegetation.cat.codes.values
 
         logger.info("Extracted vegetation data: %d samples, %d unique types",
@@ -274,3 +294,18 @@ class Sample:
         if self._data is None:
             return "SampleReader(no data loaded)"
         return f"SampleReader({len(self._data)} samples, {len(self._data.columns)} columns)"
+
+def calculate_dependence(sample: Sample) -> np.ndarray:
+    """
+    Calculate dependence from sample file
+
+    Args:
+        sample: Sample object
+
+    Returns:
+        Array of dependence
+    """
+    biomass_add, biomass_ck = sample.get_biomass()
+    duration = sample.get_duration()
+    dependence = biomass_add / biomass_ck
+    return dependence

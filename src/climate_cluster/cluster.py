@@ -108,7 +108,8 @@ class GMMCluster:
                  random_state: int = 42, n_init: int = 10, 
                  max_covariance_det: Optional[float] = None,
                  min_cluster_separation: Optional[float] = None,
-                 max_mean_mahalanobis: Optional[float] = None):
+                 max_mean_mahalanobis: Optional[float] = None,
+                 use_mpi: bool = False):
         """
         Initialize GMM clustering
 
@@ -125,6 +126,7 @@ class GMMCluster:
                                    Higher values require greater inter-cluster distances. None means no check.
             max_mean_mahalanobis: Maximum average Mahalanobis distance within each cluster.
                                  Lower values require more compact clusters. None means no check.
+            use_mpi: Whether to use MPI parallelization for log likelihood calculation
         """
         self.k = n_components
         self.confidence = confidence
@@ -132,6 +134,7 @@ class GMMCluster:
         self.tol = tol
         self.random_state = random_state
         self.n_init = n_init
+        self.use_mpi = use_mpi
 
         # Strictness parameters
         self.max_covariance_det = max_covariance_det
@@ -263,18 +266,17 @@ class GMMCluster:
             # Add regularization for numerical stability
             self.sigma[k] += 1e-6 * np.eye(d)
 
-    def _calculate_log_likelihood(self, X: np.ndarray, use_mpi: bool = False) -> float:
+    def _calculate_log_likelihood(self, X: np.ndarray) -> float:
         """
         Calculate log likelihood of data (supports MPI parallelization)
 
         Args:
             X: Input data (N, d)
-            use_mpi: Whether to use MPI parallelization (default: False to avoid nested MPI)
 
         Returns:
             Log likelihood value
         """
-        if use_mpi and MPI_AVAILABLE:
+        if self.use_mpi and MPI_AVAILABLE:
             return self._calculate_log_likelihood_mpi(X)
         else:
             return self._calculate_log_likelihood_serial(X)
@@ -439,6 +441,12 @@ class GMMCluster:
         Returns:
             (is_valid, message): Whether validation passed and detailed information
         """
+        # Determine if we should log (only rank 0 logs when using MPI)
+        should_log = True
+        if self.use_mpi and MPI_AVAILABLE:
+            comm = MPI.COMM_WORLD
+            should_log = (comm.Get_rank() == 0)
+
         metrics = self._calculate_cluster_compactness(X)
 
         # Add cluster separation to metrics
@@ -454,7 +462,8 @@ class GMMCluster:
                 if cov_det > self.max_covariance_det:
                     msg = (f"Cluster {k} covariance determinant {cov_det:.4f} exceeds threshold {self.max_covariance_det:.4f}, "
                           f"cluster is not compact enough")
-                    logger.warning(msg)
+                    if should_log:
+                        logger.warning(msg)
                     return False, msg
 
         # Check 2: Mean Mahalanobis distance within clusters
@@ -463,7 +472,8 @@ class GMMCluster:
                 if mean_dist > self.max_mean_mahalanobis:
                     msg = (f"Cluster {k} mean Mahalanobis distance {mean_dist:.4f} exceeds threshold {self.max_mean_mahalanobis:.4f}, "
                           f"within-cluster dispersion is too high")
-                    logger.warning(msg)
+                    if should_log:
+                        logger.warning(msg)
                     return False, msg
 
         # Check 3: Inter-cluster separation
@@ -472,14 +482,16 @@ class GMMCluster:
             if separation < self.min_cluster_separation:
                 msg = (f"Cluster separation {separation:.4f} is below threshold {self.min_cluster_separation:.4f}, "
                       f"inter-cluster distance is not sufficient")
-                logger.warning(msg)
+                if should_log:
+                    logger.warning(msg)
                 return False, msg
 
-        logger.info("Cluster quality validation passed")
-        logger.info(f"  Covariance determinants: {metrics['covariance_determinants']}")
-        logger.info(f"  Mean Mahalanobis distances: {metrics['mean_mahalanobis_distances']}")
-        if self.min_cluster_separation is not None:
-            logger.info(f"  Cluster separation: {separation:.4f}")
+        if should_log:
+            logger.info("Cluster quality validation passed")
+            logger.info(f"  Covariance determinants: {metrics['covariance_determinants']}")
+            logger.info(f"  Mean Mahalanobis distances: {metrics['mean_mahalanobis_distances']}")
+            if self.min_cluster_separation is not None:
+                logger.info(f"  Cluster separation: {separation:.4f}")
 
         return True, "Cluster quality meets all requirements"
 
@@ -497,6 +509,12 @@ class GMMCluster:
         Raises:
             ValueError: If cluster quality does not meet strictness requirements
         """
+        # Determine if we should log (only rank 0 logs when using MPI)
+        should_log = True
+        if self.use_mpi and MPI_AVAILABLE:
+            comm = MPI.COMM_WORLD
+            should_log = (comm.Get_rank() == 0)
+
         self.n_samples, self.n_features = X.shape
         best_log_likelihood = -np.inf
         best_params = None
@@ -523,11 +541,13 @@ class GMMCluster:
 
                 # Check convergence (equation 9)
                 if abs(current_log_likelihood - prev_log_likelihood) < self.tol:
-                    logger.info(f"Converged at iteration {iteration + 1} (init {init + 1})")
+                    if should_log:
+                        logger.info(f"Converged at iteration {iteration + 1} (init {init + 1})")
                     break
 
                 prev_log_likelihood = current_log_likelihood
-                logger.info(f"Iteration {iteration + 1} (init {init + 1}) log likelihood: {current_log_likelihood:.4f}")
+                if should_log:
+                    logger.info(f"Iteration {iteration + 1} (init {init + 1}) log likelihood: {current_log_likelihood:.4f}")
 
             # Keep best initialization
             if current_log_likelihood > best_log_likelihood:
@@ -538,7 +558,8 @@ class GMMCluster:
                     'sigma': self.sigma.copy(),
                     'log_likelihood_history': log_likelihood_history
                 }
-            logger.info(f"Best log likelihood: {best_log_likelihood:.4f}")
+            if should_log:
+                logger.info(f"Best log likelihood: {best_log_likelihood:.4f}")
 
         # Set best parameters
         self.pi = best_params['pi']
@@ -548,7 +569,8 @@ class GMMCluster:
         self.final_log_likelihood = best_log_likelihood
         self.is_fitted = True
 
-        logger.info(f"Final log likelihood: {self.final_log_likelihood:.4f}")
+        if should_log:
+            logger.info(f"Final log likelihood: {self.final_log_likelihood:.4f}")
 
         # Validate cluster quality
         if validate_quality:
@@ -717,140 +739,53 @@ class GMMCluster:
         return info
 
 
-def select_optimal_k_with_aic(X: np.ndarray, k_range: range, use_mpi: bool = False, **gmm_params) -> Tuple[int, Dict[int, float]]:
+def select_optimal_k_with_aic(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
     """
-    Select optimal number of components using AIC criterion
+    Select optimal K using AIC criterion
+    Only rank 0 performs K selection, other ranks participate in log likelihood calculation
 
     Args:
         X: Input data (N, d)
         k_range: Range of K values to test
-        use_mpi: Whether to use MPI parallelization to distribute K values across processes
         **gmm_params: Additional parameters for GMMCluster
 
     Returns:
         (optimal_k, aic_scores): Best K and AIC scores for all tested K values
     """
-    if use_mpi and MPI_AVAILABLE:
+    # Check if we're in an MPI environment
+    if MPI_AVAILABLE and gmm_params.get('use_mpi', False):
         comm = MPI.COMM_WORLD
-        if comm.Get_size() > 1:
-            return _select_optimal_k_with_aic_mpi(X, k_range, **gmm_params)
-        else:
-            if comm.Get_rank() == 0:
-                logger.warning("MPI requested but only 1 process, falling back to serial execution")
-    
-    return _select_optimal_k_with_aic_serial(X, k_range, **gmm_params)
-
-
-def _select_optimal_k_with_aic_serial(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
-    """
-    Serial version of optimal K selection using AIC criterion
-
-    Args:
-        X: Input data (N, d)
-        k_range: Range of K values to test
-        **gmm_params: Additional parameters for GMMCluster
-
-    Returns:
-        (optimal_k, aic_scores): Best K and AIC scores for all tested K values
-    """
-    aic_scores = {}
-
-    for k in k_range:
-        logger.info(f"Testing K = {k}...")
-        gmm = GMMCluster(n_components=k, **gmm_params)
-        gmm.fit(X, validate_quality=False)
-        logger.info("gmm training completed")
-        aic_scores[k] = gmm.calculate_aic()
-        logger.info(f"K = {k}, AIC = {aic_scores[k]:.4f}")
-
-    optimal_k = min(aic_scores.keys(), key=lambda k: aic_scores[k])
-    logger.info(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
-
-    return optimal_k, aic_scores
-
-
-def _select_optimal_k_with_aic_mpi(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
-    """
-    MPI parallel version of optimal K selection using AIC criterion
-
-    Args:
-        X: Input data (N, d)
-        k_range: Range of K values to test
-        **gmm_params: Additional parameters for GMMCluster
-
-    Returns:
-        (optimal_k, aic_scores): Best K and AIC scores for all tested K values
-
-    Notes:
-        - Each MPI process will compute AIC for a subset of K values
-        - Results are gathered to rank 0 for final selection
-        - All processes will receive the same optimal_k and aic_scores
-    """
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    # Convert range to list for easier distribution
-    k_list = list(k_range)
-
-    # Distribute K values across processes
-    # Each process gets approximately len(k_list)/size values
-    k_per_process = len(k_list) // size
-    remainder = len(k_list) % size
-
-    # Calculate start and end indices for this process
-    if rank < remainder:
-        start_idx = rank * (k_per_process + 1)
-        end_idx = start_idx + k_per_process + 1
+        rank = comm.Get_rank()
     else:
-        start_idx = rank * k_per_process + remainder
-        end_idx = start_idx + k_per_process
+        rank = 0
+        comm = None
 
-    local_k_values = k_list[start_idx:end_idx]
-
+    # Only rank 0 performs K selection loop
     if rank == 0:
-        logger.info(f"MPI parallel execution with {size} processes")
-        logger.info(f"Total K values to test: {len(k_list)}")
+        aic_scores = {}
 
-    # Each process computes AIC for its assigned K values
-    local_aic_scores = {}
-    for k in local_k_values:
-        logger.info(f"[Rank {rank}] Testing K = {k}...")
-        try:
+        for k in k_range:
+            logger.info(f"Testing K = {k}...")
             gmm = GMMCluster(n_components=k, **gmm_params)
             gmm.fit(X, validate_quality=False)
-            aic = gmm.calculate_aic()
-            local_aic_scores[k] = aic
-            logger.info(f"[Rank {rank}] K = {k}, AIC = {aic:.4f}")
-        except Exception as e:
-            logger.error(f"[Rank {rank}] Error computing K = {k}: {e}")
-            local_aic_scores[k] = np.inf  # Use infinity for failed computations
+            aic_scores[k] = gmm.calculate_aic()
+            logger.info(f"K = {k}, AIC = {aic_scores[k]:.4f}")
 
-    # Gather all results to rank 0
-    all_aic_scores = comm.gather(local_aic_scores, root=0)
-
-    # Rank 0 combines results and finds optimal K
-    if rank == 0:
-        # Merge all dictionaries
-        aic_scores = {}
-        for scores_dict in all_aic_scores:
-            aic_scores.update(scores_dict)
-
-        # Find optimal K
-        valid_scores = {k: v for k, v in aic_scores.items() if np.isfinite(v)}
-        if not valid_scores:
-            raise ValueError("All K values resulted in invalid AIC scores")
-
-        optimal_k = min(valid_scores.keys(), key=lambda k: valid_scores[k])
-        logger.info("=" * 60)
+        optimal_k = min(aic_scores.keys(), key=lambda k: aic_scores[k])
         logger.info(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
-        logger.info("=" * 60)
 
         result = (optimal_k, aic_scores)
     else:
+        # Other ranks participate in log likelihood calculation during fit
+        # They need to call fit() for each K to participate in MPI collective operations
+        for k in k_range:
+            gmm = GMMCluster(n_components=k, **gmm_params)
+            gmm.fit(X, validate_quality=False)
+
         result = None
 
-    # Broadcast result to all processes
-    result = comm.bcast(result, root=0)
+    # Broadcast result to all processes if using MPI
+    if comm is not None:
+        result = comm.bcast(result, root=0)
 
     return result

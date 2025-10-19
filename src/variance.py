@@ -94,14 +94,36 @@ class Variance(BaseModel):
     vegetation: VegetationVariance
     nitrogen: NitrogenVariance
 
-    def model_dump(self) -> dict:
+    def model_dump(self, *, only_continuous: bool = False, **kwargs) -> dict:
         """
         Dump model to dictionary
+
+        Args:
+            only_continuous: If True, exclude categorical variables
+            **kwargs: Additional arguments passed to pydantic's model_dump
+
+        Returns:
+            Dictionary with all variables (or only continuous if only_continuous=True)
         """
-        climate_data = self.climate.model_dump()
-        soil_data = self.soil.model_dump()
-        vegetation_data = self.vegetation.model_dump()
-        nitrogen_data = self.nitrogen.model_dump()
+        climate_data = self.climate.model_dump(**kwargs)
+        soil_data = self.soil.model_dump(**kwargs)
+        vegetation_data = self.vegetation.model_dump(**kwargs)
+        nitrogen_data = self.nitrogen.model_dump(**kwargs)
+
+        if only_continuous:
+            # Remove categorical variables
+            # VegetationVariance: all fields are categorical
+            # NitrogenVariance: fertilizer_type and treatment_date are categorical
+            categorical_fields = {
+                'vegetation_type',  # VegetationVariance
+                'fertilizer_type',  # NitrogenVariance
+                'treatment_date'    # NitrogenVariance
+            }
+
+            # Filter out categorical variables
+            vegetation_data = {}  # All vegetation fields are categorical
+            nitrogen_data = {k: v for k, v in nitrogen_data.items() if k not in categorical_fields}
+
         return {
             **climate_data,
             **soil_data,
@@ -113,5 +135,5 @@ def unpack_variance(input_var: List[Variance]) -> pd.DataFrame:
     """
     Unpack variance into a dataframe
     """
-    data = [var.model_dump() for var in input_var]
+    data = [var.model_dump(only_continuous = True) for var in input_var]
     return pd.DataFrame(data)

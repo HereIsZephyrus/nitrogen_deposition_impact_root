@@ -35,7 +35,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
     else:
         rank = 0
         comm = None
-    
+
     # Only rank 0 reads and preprocesses data
     if rank == 0:
         dim = len(ClimateVariance.model_fields)
@@ -47,7 +47,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
         stacked_raster = None
         sample_data = None
         dim = None
-    
+
     # Broadcast data to all processes if using MPI
     if MPI_AVAILABLE:
         stacked_raster = comm.bcast(stacked_raster, root=0)
@@ -71,7 +71,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
     )
     sample_cluster.fit(standardized_sample)
     sample_cluster_result = sample_cluster.predict_with_confidence(standardized_sample)
-    
+
     # Only rank 0 saves results
     if rank == 0:
         sample_cluster_result.save(os.path.join(output_dir, 'sample_cluster_result.csv'))
@@ -102,28 +102,29 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
 
     # Exclude confident pixels from further clustering
     res_data = raster_cluster_first_result.exclude(valid_raster_data)
-    
-    # Determine if we should use MPI for K selection
+
+    # Determine if we should use MPI for log likelihood calculation
     # Only use MPI if we're in an MPI environment (multiple processes)
-    use_mpi_for_k_selection = MPI_AVAILABLE and (comm is not None) and (comm.Get_size() > 1)
-    
+    use_mpi_for_calc = MPI_AVAILABLE and (comm is not None) and (comm.Get_size() > 1)
+
     global_gmm_params = {
         "confidence": confidence,
         "max_iter": 100,
         "tol": 1e-6,
         "random_state": 42,
-        "n_init": 3
+        "n_init": 3,
+        "use_mpi": use_mpi_for_calc  # Use MPI for log likelihood calculation inside GMMCluster
     }
-    besk_k = select_optimal_k_with_aic(
-        X=res_data,
-        k_range=range(4, 11),
-        use_mpi=use_mpi_for_k_selection,  # Use MPI to distribute K values across processes
-        **global_gmm_params
-    )
-    if besk_k is None:
-        if rank == 0:
-            logger.error("No optimal k found")
-        raise ValueError("No optimal k found")
+    besk_k = 11 # has already been selected
+    #besk_k = select_optimal_k_with_aic(
+    #    X=res_data,
+    #    k_range=range(9, 12),
+    #    **global_gmm_params
+    #)
+    #if besk_k is None:
+    #    if rank == 0:
+    #        logger.error("No optimal k found")
+    #    raise ValueError("No optimal k found")
     res_cluster = GMMCluster(
         n_components=besk_k,
         **global_gmm_params
