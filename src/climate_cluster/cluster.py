@@ -263,9 +263,25 @@ class GMMCluster:
             # Add regularization for numerical stability
             self.sigma[k] += 1e-6 * np.eye(d)
 
-    def _calculate_log_likelihood(self, X: np.ndarray) -> float:
+    def _calculate_log_likelihood(self, X: np.ndarray, use_mpi: bool = False) -> float:
         """
-        Calculate log likelihood of data
+        Calculate log likelihood of data (supports MPI parallelization)
+
+        Args:
+            X: Input data (N, d)
+            use_mpi: Whether to use MPI parallelization (default: False to avoid nested MPI)
+
+        Returns:
+            Log likelihood value
+        """
+        if use_mpi and MPI_AVAILABLE:
+            return self._calculate_log_likelihood_mpi(X)
+        else:
+            return self._calculate_log_likelihood_serial(X)
+
+    def _calculate_log_likelihood_serial(self, X: np.ndarray) -> float:
+        """
+        Serial (vectorized) version of log likelihood calculation
 
         Args:
             X: Input data (N, d)
@@ -274,21 +290,73 @@ class GMMCluster:
             Log likelihood value
         """
         N = X.shape[0]
-        log_likelihood = 0
 
-        for n in range(N):
-            likelihood = 0
-            for k in range(self.k):
-                likelihood += self.pi[k] * self._multivariate_gaussian(
-                    X[n:n+1], self.mu[k], self.sigma[k]
-                )[0]
+        # Vectorized calculation: compute all likelihoods at once
+        likelihoods = np.zeros(N)
+        for k in range(self.k):
+            likelihoods += self.pi[k] * self._multivariate_gaussian(X, self.mu[k], self.sigma[k])
 
-            if likelihood > 0:
-                log_likelihood += np.log(likelihood)
-            else:
-                log_likelihood += -1e10  # Handle numerical issues
+        # Handle numerical issues
+        likelihoods = np.maximum(likelihoods, 1e-300)
+        log_likelihood = np.sum(np.log(likelihoods))
 
         return log_likelihood
+
+    def _calculate_log_likelihood_mpi(self, X: np.ndarray) -> float:
+        """
+        MPI parallel version of log likelihood calculation
+
+        Args:
+            X: Input data (N, d)
+
+        Returns:
+            Log likelihood value
+        """
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+
+        N = X.shape[0]
+
+        # Distribute data across processes
+        n_per_process = N // size
+        remainder = N % size
+
+        # Calculate start and end indices for this process
+        if rank < remainder:
+            start_idx = rank * (n_per_process + 1)
+            end_idx = start_idx + n_per_process + 1
+        else:
+            start_idx = rank * n_per_process + remainder
+            end_idx = start_idx + n_per_process
+
+        # Get local data chunk
+        X_local = X[start_idx:end_idx]
+
+        # Calculate local log likelihood
+        local_likelihoods = np.zeros(len(X_local))
+        for k in range(self.k):
+            local_likelihoods += self.pi[k] * self._multivariate_gaussian(
+                X_local, self.mu[k], self.sigma[k]
+            )
+
+        # Handle numerical issues
+        local_likelihoods = np.maximum(local_likelihoods, 1e-300)
+        local_log_likelihood = np.sum(np.log(local_likelihoods))
+
+        # Gather all local log likelihoods to rank 0
+        all_local_log_likelihoods = comm.gather(local_log_likelihood, root=0)
+
+        # Sum up all contributions
+        if rank == 0:
+            total_log_likelihood = sum(all_local_log_likelihoods)
+        else:
+            total_log_likelihood = None
+
+        # Broadcast result to all processes
+        total_log_likelihood = comm.bcast(total_log_likelihood, root=0)
+
+        return total_log_likelihood
 
     def _calculate_cluster_compactness(self, X: np.ndarray) -> Dict[str, Any]:
         """
@@ -459,6 +527,7 @@ class GMMCluster:
                     break
 
                 prev_log_likelihood = current_log_likelihood
+                logger.info(f"Iteration {iteration + 1} (init {init + 1}) log likelihood: {current_log_likelihood:.4f}")
 
             # Keep best initialization
             if current_log_likelihood > best_log_likelihood:
@@ -469,6 +538,7 @@ class GMMCluster:
                     'sigma': self.sigma.copy(),
                     'log_likelihood_history': log_likelihood_history
                 }
+            logger.info(f"Best log likelihood: {best_log_likelihood:.4f}")
 
         # Set best parameters
         self.pi = best_params['pi']
@@ -614,6 +684,7 @@ class GMMCluster:
         n_params = (self.k - 1) + self.k * self.n_features + self.k * self.n_features * (self.n_features + 1) // 2
 
         aic = -2 * self.final_log_likelihood + 2 * n_params
+        logger.info(f"AIC = {aic:.4f}")
 
         return aic
 
@@ -645,6 +716,7 @@ class GMMCluster:
 
         return info
 
+
 def select_optimal_k_with_aic(X: np.ndarray, k_range: range, use_mpi: bool = False, **gmm_params) -> Tuple[int, Dict[int, float]]:
     """
     Select optimal number of components using AIC criterion
@@ -652,18 +724,21 @@ def select_optimal_k_with_aic(X: np.ndarray, k_range: range, use_mpi: bool = Fal
     Args:
         X: Input data (N, d)
         k_range: Range of K values to test
-        use_mpi: Whether to use MPI parallelization. Defaults to False.
+        use_mpi: Whether to use MPI parallelization to distribute K values across processes
         **gmm_params: Additional parameters for GMMCluster
 
     Returns:
         (optimal_k, aic_scores): Best K and AIC scores for all tested K values
     """
     if use_mpi and MPI_AVAILABLE:
-        return _select_optimal_k_with_aic_mpi(X, k_range, **gmm_params)
-    else:
-        if use_mpi and not MPI_AVAILABLE:
-            logger.warning("MPI not available, falling back to serial execution")
-        return _select_optimal_k_with_aic_serial(X, k_range, **gmm_params)
+        comm = MPI.COMM_WORLD
+        if comm.Get_size() > 1:
+            return _select_optimal_k_with_aic_mpi(X, k_range, **gmm_params)
+        else:
+            if comm.Get_rank() == 0:
+                logger.warning("MPI requested but only 1 process, falling back to serial execution")
+    
+    return _select_optimal_k_with_aic_serial(X, k_range, **gmm_params)
 
 
 def _select_optimal_k_with_aic_serial(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
@@ -683,7 +758,8 @@ def _select_optimal_k_with_aic_serial(X: np.ndarray, k_range: range, **gmm_param
     for k in k_range:
         logger.info(f"Testing K = {k}...")
         gmm = GMMCluster(n_components=k, **gmm_params)
-        gmm.fit(X)
+        gmm.fit(X, validate_quality=False)
+        logger.info("gmm training completed")
         aic_scores[k] = gmm.calculate_aic()
         logger.info(f"K = {k}, AIC = {aic_scores[k]:.4f}")
 
@@ -742,7 +818,7 @@ def _select_optimal_k_with_aic_mpi(X: np.ndarray, k_range: range, **gmm_params) 
         logger.info(f"[Rank {rank}] Testing K = {k}...")
         try:
             gmm = GMMCluster(n_components=k, **gmm_params)
-            gmm.fit(X)
+            gmm.fit(X, validate_quality=False)
             aic = gmm.calculate_aic()
             local_aic_scores[k] = aic
             logger.info(f"[Rank {rank}] K = {k}, AIC = {aic:.4f}")

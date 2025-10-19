@@ -21,6 +21,9 @@ from .pca import PCAnalyzer
 from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
 from ..n_impact_soil.calculator import SoilCalculator, transfer_N_input
+from ..geo_reader import load_variance
+from ..variance import Variance, unpack_variance
+
 
 logger = logging.getLogger(__name__)
 
@@ -921,45 +924,25 @@ class BiomassRelationshipProcessor:
         }
 
 
-def main():
+def train(statistic_folder_path: str, output_dir: str):
     """
     Main entry point for biomass relationship analysis
     """
-    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    sample_data_path = os.path.join(project_root, 'data', 'sample.csv')
-    soil_impact_data_path = os.path.join(project_root, 'data', 'soil_change_nitrogen.csv')
-    output_dir = os.path.join(project_root, 'results', 'biomass_relationship')
+    sample_data_path = os.path.join(statistic_folder_path, 'sample.csv')
+    soil_impact_data_path = os.path.join(statistic_folder_path, 'soil_change_nitrogen.csv')
 
-    logger.info("Project root: %s", project_root)
-    logger.info("Sample data: %s", sample_data_path)
-    logger.info("Soil impact data: %s", soil_impact_data_path)
-    logger.info("Output directory: %s", output_dir)
+    input_var = load_variance(sample_data_path)
+    raw_data = unpack_variance(input_var)
 
-    # Create processor
-    processor = BiomassRelationshipProcessor(
-        sample_data_path=sample_data_path,
-        soil_impact_data_path=soil_impact_data_path,
-        output_dir=output_dir,
-        n_components=None,
-        variance_threshold=0.95,
+    pca_analyzer = PCAnalyzer(
         max_components=20,
-        test_size=0.2,
-        random_state=42
+        variance_threshold=0.95,
     )
 
-    # Run complete analysis
-    results = processor.run_complete_analysis(
-        apply_nitrogen_impact=True,
-        apply_pca=True,
-        train_xgb=True,
-        train_lgb=True,
-        train_svm_models=True,
-        perform_shap=True
-    )
+    pca_analyzer.fit(raw_data)
+    pca_analyzer.save(os.path.join(output_dir, 'pca_analyzer.csv'))
+    transformed_data = pca_analyzer.transform(raw_data)
 
-    logger.info("Analysis completed successfully!")
-
-    return results
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 """
 Variance models for environmental data based on sample CSV structure
 """
+from typing import List
 from pydantic import BaseModel, Field
+import pandas as pd
 
 class ClimateVariance(BaseModel):
     """
@@ -91,3 +93,25 @@ class Variance(BaseModel):
     soil: SoilVariance
     vegetation: VegetationVariance
     nitrogen: NitrogenVariance
+
+    def model_dump(self) -> dict:
+        """
+        Dump model to dictionary
+        """
+        climate_data = self.climate.model_dump()
+        soil_data = self.soil.model_dump()
+        vegetation_data = self.vegetation.model_dump()
+        nitrogen_data = self.nitrogen.model_dump()
+        return {
+            **climate_data,
+            **soil_data,
+            **vegetation_data,
+            **nitrogen_data
+        }
+
+def unpack_variance(input_var: List[Variance]) -> pd.DataFrame:
+    """
+    Unpack variance into a dataframe
+    """
+    data = [var.model_dump() for var in input_var]
+    return pd.DataFrame(data)

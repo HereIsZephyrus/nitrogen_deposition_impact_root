@@ -18,7 +18,7 @@ class PCAnalyzer:
     Performs standardization and PCA transformation on input data
     """
 
-    def __init__(self, n_components: Optional[int] = None, variance_threshold: float = 0.95):
+    def __init__(self, variance_threshold: float, max_components: int, n_components: Optional[int] = None):
         """
         Initialize PCA analyzer
 
@@ -29,6 +29,7 @@ class PCAnalyzer:
         """
         self.n_components = n_components
         self.variance_threshold = variance_threshold
+        self.max_components = max_components
         self.scaler = StandardScaler()
         self.pca = None
         self.is_fitted = False
@@ -72,6 +73,8 @@ class PCAnalyzer:
             # Find number of components needed for variance threshold
             cumsum_var = np.cumsum(pca_temp.explained_variance_ratio_)
             n_comp = np.argmax(cumsum_var >= self.variance_threshold) + 1
+            if n_comp > self.max_components:
+                n_comp = self.max_components
             self.n_components = n_comp
 
             logger.info("Selected %d components to explain %.1f%% variance",
@@ -115,21 +118,6 @@ class PCAnalyzer:
                    data_array.shape[1], transformed.shape[1])
 
         return transformed
-
-    def fit_transform(self, data: Union[np.ndarray, pd.DataFrame],
-                     feature_names: Optional[List[str]] = None) -> np.ndarray:
-        """
-        Fit PCA model and transform data in one step
-
-        Args:
-            data: Input data with shape (n_samples, n_features)
-            feature_names: Optional list of feature names
-
-        Returns:
-            Transformed data with shape (n_samples, n_components)
-        """
-        self.fit(data, feature_names)
-        return self.transform(data)
 
     def inverse_transform(self, transformed_data: np.ndarray) -> np.ndarray:
         """
@@ -266,3 +254,42 @@ class PCAnalyzer:
                    f"fitted=True, variance_explained={var_explained:.2f}%)")
         else:
             return f"PCAnalyzer(n_components={self.n_components}, fitted=False)"
+
+    def save(self, save_path: str):
+        """
+        Save PCA information including weights and summary to file
+
+        Args:
+            save_path: Path to save the results (should end with .xlsx or .csv)
+                      For .xlsx: saves multiple sheets (summary + each component)
+                      For .csv: saves summary to specified path and components to separate files
+        """
+        if not self.is_fitted:
+            raise ValueError("PCA model not fitted. Call fit() first.")
+
+        summary = self.get_summary()
+        base_path = save_path.rsplit('.', 1)[0]
+
+        summary_path = f"{base_path}_summary.csv"
+        summary.to_csv(summary_path, index=False)
+        logger.info("Saved PCA summary to %s", summary_path)
+
+        # Save loadings for each component
+        for i in range(self.n_components):
+            component_name = f'PC{i+1}'
+            loadings = self.get_feature_importance(component_idx=i)
+            component_path = f"{base_path}_{component_name}_loadings.csv"
+            loadings.to_csv(component_path, index=False)
+            logger.info("Saved loadings for %s to %s", component_name, component_path)
+
+        # Save all components matrix
+        components_df = pd.DataFrame(
+            self.pca.components_.T,
+            columns=[f'PC{i+1}' for i in range(self.n_components)],
+            index=self.feature_names if self.feature_names else [f'feature_{i}' for i in range(self.pca.components_.shape[1])]
+        )
+        components_path = f"{base_path}_all_components.csv"
+        components_df.to_csv(components_path)
+        logger.info("Saved all components matrix to %s", components_path)
+
+        logger.info("PCA information saved to %s (multiple files)", base_path)
