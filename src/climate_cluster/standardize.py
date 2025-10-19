@@ -57,7 +57,10 @@ class Standardizer:
         Apply z-score standardization to new sample data using fitted statistics
 
         Args:
-            raw_data: Raster object or List[Raster] or numpy array
+            raw_data: numpy array with shape (dim, x, y) or (dim, num)
+
+        Returns:
+            standardized data with shape (num, dim)
         """
         if not self.is_fitted:
             raise ValueError("Please call fit() method first to compute statistics")
@@ -72,11 +75,11 @@ class Standardizer:
         elif len(raw_data.shape) == 3:
             mean_reshaped = self.mean.reshape(-1, 1, 1)  # (dim, 1, 1)
             std_reshaped = self.std.reshape(-1, 1, 1)   # (dim, 1, 1)
-            standardized_data = (raw_data - mean_reshaped) / std_reshaped
+            standardized_data = ((raw_data - mean_reshaped) / std_reshaped).reshape(self.dimension, -1)
         else:
             raise ValueError(f"Input data shape ({raw_data.shape}) is not expected (dim, x, y), please check the input data")
 
-        return standardized_data
+        return standardized_data.T
 
     def _create_land_mask(self, reference_raster: Raster) -> None:
         """

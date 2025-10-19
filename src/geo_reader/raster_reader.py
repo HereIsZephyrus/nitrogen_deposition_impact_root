@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 import numpy as np
 import xarray as xr
-from osgeo import gdal, osr
+from osgeo import gdal
 
 gdal.UseExceptions()
 
@@ -96,7 +96,7 @@ class RasterReader:
                 raise ValueError(f"No data variables found in NetCDF file {file_path}")
 
             data = ds[data_vars[0]].values
-            
+
             if hasattr(ds[data_vars[0]], '_FillValue'):
                 fill_value = getattr(ds[data_vars[0]], '_FillValue')
                 data = np.where(data == fill_value, np.nan, data)

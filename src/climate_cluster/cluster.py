@@ -1,9 +1,17 @@
 import os
 import logging
+import warnings
+from typing import Tuple, Dict, Any, Optional
 import numpy as np
-from typing import Tuple, Dict, Any
 from scipy.stats import chi2
 from scipy.linalg import det, inv
+import pandas as pd
+
+try:
+    from mpi4py import MPI
+    MPI_AVAILABLE = True
+except ImportError:
+    MPI_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -11,16 +19,72 @@ class ClusterResult:
     """
     Cluster result class
     """
-    def __init__(self, labels: np.ndarray, confident_mask: np.ndarray):
+    def __init__(self, labels: np.ndarray, confident_mask: np.ndarray, quality_metrics: Optional[Dict[str, Any]] = None):
         self.labels = labels
         self.confident_mask = confident_mask
+        self.quality_metrics = quality_metrics
 
-    def save(self, output_dir: str):
+    def save(self, output_path: str):
         """
-        Save cluster result to output directory
+        Save cluster result to output directory as csv and print quality metrics
         """
-        np.save(os.path.join(output_dir, 'labels.npy'), self.labels)
-        np.save(os.path.join(output_dir, 'confident_mask.npy'), self.confident_mask)
+        # Save clustering labels and confidence mask
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        pd.DataFrame({'labels': self.labels, "confident_mask": self.confident_mask}).to_csv(output_path, index=True)
+        logger.info(f"Cluster results saved to: {output_path}")
+
+        # Print quality metrics if available
+        if self.quality_metrics is not None:
+            logger.info("=" * 60)
+            logger.info("CLUSTER QUALITY METRICS")
+            logger.info("=" * 60)
+
+            # Print cluster sizes
+            if 'cluster_sizes' in self.quality_metrics:
+                sizes = self.quality_metrics['cluster_sizes']
+                logger.info(f"Cluster sizes: {sizes}")
+                for k, size in enumerate(sizes):
+                    logger.info(f"  Cluster {k}: {size} samples")
+
+            # Print covariance determinants (compactness indicator)
+            if 'covariance_determinants' in self.quality_metrics:
+                dets = self.quality_metrics['covariance_determinants']
+                logger.info(f"\nCovariance determinants (lower = more compact):")
+                for k, det_val in enumerate(dets):
+                    logger.info(f"  Cluster {k}: {det_val:.6f}")
+
+            # Print mean Mahalanobis distances (within-cluster dispersion)
+            if 'mean_mahalanobis_distances' in self.quality_metrics:
+                dists = self.quality_metrics['mean_mahalanobis_distances']
+                logger.info(f"\nMean Mahalanobis distances (lower = more compact):")
+                for k, dist in enumerate(dists):
+                    logger.info(f"  Cluster {k}: {dist:.4f}")
+
+            # Print variance traces
+            if 'cluster_std_traces' in self.quality_metrics:
+                traces = self.quality_metrics['cluster_std_traces']
+                logger.info(f"\nCovariance traces (total variance):")
+                for k, trace in enumerate(traces):
+                    logger.info(f"  Cluster {k}: {trace:.4f}")
+
+            # Print separation metrics if available
+            if 'cluster_separation' in self.quality_metrics:
+                sep = self.quality_metrics['cluster_separation']
+                logger.info(f"\nMinimum cluster separation ratio: {sep:.4f}")
+
+            logger.info("=" * 60)
+
+            # Save quality metrics to a separate file
+            metrics_path = output_path.replace('.csv', '_quality_metrics.csv')
+            metrics_df = pd.DataFrame({
+                'cluster_id': range(len(self.quality_metrics.get('cluster_sizes', []))),
+                'cluster_size': self.quality_metrics.get('cluster_sizes', []),
+                'covariance_determinant': self.quality_metrics.get('covariance_determinants', []),
+                'mean_mahalanobis_distance': self.quality_metrics.get('mean_mahalanobis_distances', []),
+                'covariance_trace': self.quality_metrics.get('cluster_std_traces', [])
+            })
+            metrics_df.to_csv(metrics_path, index=False)
+            logger.info(f"Quality metrics saved to: {metrics_path}")
 
     def exclude(self, data: np.ndarray) -> np.ndarray:
         """
@@ -32,7 +96,7 @@ class ClusterResult:
         Returns:
             Excluded data (N, d)
         """
-        return data[self.confident_mask]
+        return data[~self.confident_mask] # return data that is not confident
 
 class GMMCluster:
     """
@@ -41,7 +105,11 @@ class GMMCluster:
     """
 
     def __init__(self, n_components: int, confidence: float, max_iter: int = 100, tol: float = 1e-6,
-                 random_state: int = 42, n_init: int = 10):
+                 random_state: int = 42, n_init: int = 10, 
+                 max_covariance_det: Optional[float] = None,
+                 min_cluster_separation: Optional[float] = None,
+                 max_mean_mahalanobis: Optional[float] = None,
+                 use_mpi: bool = False):
         """
         Initialize GMM clustering
 
@@ -52,18 +120,31 @@ class GMMCluster:
             tol: Convergence tolerance (epsilon in equation 9)
             random_state: Random seed for reproducibility
             n_init: Number of random initializations
+            max_covariance_det: Maximum covariance determinant threshold for cluster compactness.
+                               Lower values require more compact clusters. None means no check.
+            min_cluster_separation: Minimum cluster separation ratio (center distance / avg std).
+                                   Higher values require greater inter-cluster distances. None means no check.
+            max_mean_mahalanobis: Maximum average Mahalanobis distance within each cluster.
+                                 Lower values require more compact clusters. None means no check.
+            use_mpi: Whether to use MPI parallelization for log likelihood calculation
         """
-        self.K = n_components
+        self.k = n_components
         self.confidence = confidence
         self.max_iter = max_iter
         self.tol = tol
         self.random_state = random_state
         self.n_init = n_init
+        self.use_mpi = use_mpi
+
+        # Strictness parameters
+        self.max_covariance_det = max_covariance_det
+        self.min_cluster_separation = min_cluster_separation
+        self.max_mean_mahalanobis = max_mean_mahalanobis
 
         # Model parameters
         self.pi = None          # Mixture weights (K,)
         self.mu = None          # Means (K, d)
-        self.Sigma = None       # Covariances (K, d, d)
+        self.sigma = None       # Covariances (K, d, d)
 
         # Training results
         self.is_fitted = False
@@ -71,6 +152,7 @@ class GMMCluster:
         self.final_log_likelihood = None
         self.n_features = None
         self.n_samples = None
+        self.cluster_quality_metrics = None
 
     def _initialize_parameters(self, X: np.ndarray) -> None:
         """
@@ -83,24 +165,24 @@ class GMMCluster:
         np.random.seed(self.random_state)
 
         # Initialize mixture weights uniformly
-        self.pi = np.ones(self.K) / self.K
+        self.pi = np.ones(self.k) / self.k
 
         # Initialize means by randomly selecting K data points
-        indices = np.random.choice(N, self.K, replace=False)
+        indices = np.random.choice(N, self.k, replace=False)
         self.mu = X[indices].copy()
 
         # Initialize covariances as identity matrices scaled by data variance
         data_cov = np.cov(X.T)
-        self.Sigma = np.array([data_cov for _ in range(self.K)])
+        self.sigma = np.array([data_cov for _ in range(self.k)])
 
-    def _multivariate_gaussian(self, X: np.ndarray, mu: np.ndarray, Sigma: np.ndarray) -> np.ndarray:
+    def _multivariate_gaussian(self, X: np.ndarray, mu: np.ndarray, sigma: np.ndarray) -> np.ndarray:
         """
         Calculate multivariate gaussian probability density
 
         Args:
             X: Data points (N, d)
             mu: Mean vector (d,)
-            Sigma: Covariance matrix (d, d)
+            sigma: Covariance matrix (d, d)
 
         Returns:
             Probability densities (N,)
@@ -109,12 +191,12 @@ class GMMCluster:
 
         # Handle numerical stability
         try:
-            Sigma_inv = inv(Sigma)
-            Sigma_det = det(Sigma)
+            sigma_inv = inv(sigma)
+            Sigma_det = det(sigma)
         except np.linalg.LinAlgError:
             # Add small regularization for numerical stability
-            Sigma_reg = Sigma + 1e-6 * np.eye(d)
-            Sigma_inv = inv(Sigma_reg)
+            Sigma_reg = sigma + 1e-6 * np.eye(d)
+            sigma_inv = inv(Sigma_reg)
             Sigma_det = det(Sigma_reg)
 
         if Sigma_det <= 0:
@@ -123,7 +205,7 @@ class GMMCluster:
 
         # Calculate Mahalanobis distance
         diff = X - mu
-        mahal_dist = np.sum((diff @ Sigma_inv) * diff, axis=1)
+        mahal_dist = np.sum((diff @ sigma_inv) * diff, axis=1)
 
         # Calculate probability density
         normalization = 1.0 / np.sqrt((2 * np.pi) ** d * Sigma_det)
@@ -142,11 +224,11 @@ class GMMCluster:
             Posterior probabilities (N, K)
         """
         N = X.shape[0]
-        gamma = np.zeros((N, self.K))
+        gamma = np.zeros((N, self.k))
 
         # Calculate likelihood for each component
-        for k in range(self.K):
-            gamma[:, k] = self.pi[k] * self._multivariate_gaussian(X, self.mu[k], self.Sigma[k])
+        for k in range(self.k):
+            gamma[:, k] = self.pi[k] * self._multivariate_gaussian(X, self.mu[k], self.sigma[k])
 
         # Normalize to get posterior probabilities
         gamma_sum = np.sum(gamma, axis=1, keepdims=True)
@@ -176,17 +258,32 @@ class GMMCluster:
         self.mu = (gamma.T @ X) / N_k.reshape(-1, 1)
 
         # Update covariances
-        for k in range(self.K):
+        for k in range(self.k):
             diff = X - self.mu[k]
             weighted_diff = gamma[:, k].reshape(-1, 1) * diff
-            self.Sigma[k] = (weighted_diff.T @ diff) / N_k[k]
+            self.sigma[k] = (weighted_diff.T @ diff) / N_k[k]
 
             # Add regularization for numerical stability
-            self.Sigma[k] += 1e-6 * np.eye(d)
+            self.sigma[k] += 1e-6 * np.eye(d)
 
     def _calculate_log_likelihood(self, X: np.ndarray) -> float:
         """
-        Calculate log likelihood of data
+        Calculate log likelihood of data (supports MPI parallelization)
+
+        Args:
+            X: Input data (N, d)
+
+        Returns:
+            Log likelihood value
+        """
+        if self.use_mpi and MPI_AVAILABLE:
+            return self._calculate_log_likelihood_mpi(X)
+        else:
+            return self._calculate_log_likelihood_serial(X)
+
+    def _calculate_log_likelihood_serial(self, X: np.ndarray) -> float:
+        """
+        Serial (vectorized) version of log likelihood calculation
 
         Args:
             X: Input data (N, d)
@@ -195,32 +292,229 @@ class GMMCluster:
             Log likelihood value
         """
         N = X.shape[0]
-        log_likelihood = 0
 
-        for n in range(N):
-            likelihood = 0
-            for k in range(self.K):
-                likelihood += self.pi[k] * self._multivariate_gaussian(
-                    X[n:n+1], self.mu[k], self.Sigma[k]
-                )[0]
+        # Vectorized calculation: compute all likelihoods at once
+        likelihoods = np.zeros(N)
+        for k in range(self.k):
+            likelihoods += self.pi[k] * self._multivariate_gaussian(X, self.mu[k], self.sigma[k])
 
-            if likelihood > 0:
-                log_likelihood += np.log(likelihood)
-            else:
-                log_likelihood += -1e10  # Handle numerical issues
+        # Handle numerical issues
+        likelihoods = np.maximum(likelihoods, 1e-300)
+        log_likelihood = np.sum(np.log(likelihoods))
 
         return log_likelihood
 
-    def fit(self, X: np.ndarray) -> 'GMMCluster':
+    def _calculate_log_likelihood_mpi(self, X: np.ndarray) -> float:
         """
-        Fit GMM using EM algorithm with multiple random initializations
+        MPI parallel version of log likelihood calculation
 
         Args:
             X: Input data (N, d)
 
         Returns:
-            Self for method chaining
+            Log likelihood value
         """
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+
+        N = X.shape[0]
+
+        # Distribute data across processes
+        n_per_process = N // size
+        remainder = N % size
+
+        # Calculate start and end indices for this process
+        if rank < remainder:
+            start_idx = rank * (n_per_process + 1)
+            end_idx = start_idx + n_per_process + 1
+        else:
+            start_idx = rank * n_per_process + remainder
+            end_idx = start_idx + n_per_process
+
+        # Get local data chunk
+        X_local = X[start_idx:end_idx]
+
+        # Calculate local log likelihood
+        local_likelihoods = np.zeros(len(X_local))
+        for k in range(self.k):
+            local_likelihoods += self.pi[k] * self._multivariate_gaussian(
+                X_local, self.mu[k], self.sigma[k]
+            )
+
+        # Handle numerical issues
+        local_likelihoods = np.maximum(local_likelihoods, 1e-300)
+        local_log_likelihood = np.sum(np.log(local_likelihoods))
+
+        # Gather all local log likelihoods to rank 0
+        all_local_log_likelihoods = comm.gather(local_log_likelihood, root=0)
+
+        # Sum up all contributions
+        if rank == 0:
+            total_log_likelihood = sum(all_local_log_likelihoods)
+        else:
+            total_log_likelihood = None
+
+        # Broadcast result to all processes
+        total_log_likelihood = comm.bcast(total_log_likelihood, root=0)
+
+        return total_log_likelihood
+
+    def _calculate_cluster_compactness(self, X: np.ndarray) -> Dict[str, Any]:
+        """
+        Calculate compactness metrics for each cluster
+
+        Args:
+            X: Input data (N, d)
+
+        Returns:
+            Dictionary containing various compactness metrics
+        """
+        # Get cluster assignments for each sample
+        gamma = self._e_step(X)
+        labels = np.argmax(gamma, axis=1)
+
+        metrics = {
+            'covariance_determinants': [],
+            'mean_mahalanobis_distances': [],
+            'cluster_sizes': [],
+            'cluster_std_traces': []
+        }
+
+        for k in range(self.k):
+            # Covariance matrix determinant (smaller means more compact)
+            cov_det = det(self.sigma[k])
+            metrics['covariance_determinants'].append(cov_det)
+
+            # Get samples belonging to this cluster
+            cluster_mask = labels == k
+            cluster_points = X[cluster_mask]
+            metrics['cluster_sizes'].append(len(cluster_points))
+
+            if len(cluster_points) > 0:
+                # Calculate average Mahalanobis distance to cluster center
+                distances = self.mahalanobis_distance(cluster_points, k)
+                mean_dist = np.mean(distances)
+                metrics['mean_mahalanobis_distances'].append(mean_dist)
+
+                # Covariance matrix trace (sum of diagonal elements, represents total variance)
+                std_trace = np.trace(self.sigma[k])
+                metrics['cluster_std_traces'].append(std_trace)
+            else:
+                metrics['mean_mahalanobis_distances'].append(np.inf)
+                metrics['cluster_std_traces'].append(np.inf)
+
+        return metrics
+
+    def _calculate_cluster_separation(self) -> float:
+        """
+        Calculate inter-cluster separation (minimum center distance to average std ratio)
+
+        Returns:
+            Cluster separation ratio, higher values mean greater inter-cluster distances
+        """
+        min_separation = np.inf
+
+        for i in range(self.k):
+            for j in range(i + 1, self.k):
+                # Calculate Euclidean distance between centers
+                center_dist = np.linalg.norm(self.mu[i] - self.mu[j])
+
+                # Calculate average standard deviation (using square root of covariance trace)
+                avg_std = (np.sqrt(np.trace(self.sigma[i])) + np.sqrt(np.trace(self.sigma[j]))) / 2
+
+                # Separation ratio = distance / average std
+                separation = center_dist / (avg_std + 1e-10)
+
+                if separation < min_separation:
+                    min_separation = separation
+
+        return min_separation
+
+    def _validate_cluster_quality(self, X: np.ndarray) -> Tuple[bool, str]:
+        """
+        Validate cluster quality against strictness requirements
+
+        Args:
+            X: Input data (N, d)
+
+        Returns:
+            (is_valid, message): Whether validation passed and detailed information
+        """
+        # Determine if we should log (only rank 0 logs when using MPI)
+        should_log = True
+        if self.use_mpi and MPI_AVAILABLE:
+            comm = MPI.COMM_WORLD
+            should_log = (comm.Get_rank() == 0)
+
+        metrics = self._calculate_cluster_compactness(X)
+
+        # Add cluster separation to metrics
+        if self.min_cluster_separation is not None:
+            separation = self._calculate_cluster_separation()
+            metrics['cluster_separation'] = separation
+
+        self.cluster_quality_metrics = metrics
+
+        # Check 1: Covariance determinant (compactness)
+        if self.max_covariance_det is not None:
+            for k, cov_det in enumerate(metrics['covariance_determinants']):
+                if cov_det > self.max_covariance_det:
+                    msg = (f"Cluster {k} covariance determinant {cov_det:.4f} exceeds threshold {self.max_covariance_det:.4f}, "
+                          f"cluster is not compact enough")
+                    if should_log:
+                        logger.warning(msg)
+                    return False, msg
+
+        # Check 2: Mean Mahalanobis distance within clusters
+        if self.max_mean_mahalanobis is not None:
+            for k, mean_dist in enumerate(metrics['mean_mahalanobis_distances']):
+                if mean_dist > self.max_mean_mahalanobis:
+                    msg = (f"Cluster {k} mean Mahalanobis distance {mean_dist:.4f} exceeds threshold {self.max_mean_mahalanobis:.4f}, "
+                          f"within-cluster dispersion is too high")
+                    if should_log:
+                        logger.warning(msg)
+                    return False, msg
+
+        # Check 3: Inter-cluster separation
+        if self.min_cluster_separation is not None:
+            separation = metrics['cluster_separation']
+            if separation < self.min_cluster_separation:
+                msg = (f"Cluster separation {separation:.4f} is below threshold {self.min_cluster_separation:.4f}, "
+                      f"inter-cluster distance is not sufficient")
+                if should_log:
+                    logger.warning(msg)
+                return False, msg
+
+        if should_log:
+            logger.info("Cluster quality validation passed")
+            logger.info(f"  Covariance determinants: {metrics['covariance_determinants']}")
+            logger.info(f"  Mean Mahalanobis distances: {metrics['mean_mahalanobis_distances']}")
+            if self.min_cluster_separation is not None:
+                logger.info(f"  Cluster separation: {separation:.4f}")
+
+        return True, "Cluster quality meets all requirements"
+
+    def fit(self, X: np.ndarray, validate_quality: bool = True) -> 'GMMCluster':
+        """
+        Fit GMM using EM algorithm with multiple random initializations
+
+        Args:
+            X: Input data (N, d)
+            validate_quality: Whether to validate cluster quality after training
+
+        Returns:
+            Self for method chaining
+
+        Raises:
+            ValueError: If cluster quality does not meet strictness requirements
+        """
+        # Determine if we should log (only rank 0 logs when using MPI)
+        should_log = True
+        if self.use_mpi and MPI_AVAILABLE:
+            comm = MPI.COMM_WORLD
+            should_log = (comm.Get_rank() == 0)
+
         self.n_samples, self.n_features = X.shape
         best_log_likelihood = -np.inf
         best_params = None
@@ -247,10 +541,13 @@ class GMMCluster:
 
                 # Check convergence (equation 9)
                 if abs(current_log_likelihood - prev_log_likelihood) < self.tol:
-                    print(f"Converged at iteration {iteration + 1} (init {init + 1})")
+                    if should_log:
+                        logger.info(f"Converged at iteration {iteration + 1} (init {init + 1})")
                     break
 
                 prev_log_likelihood = current_log_likelihood
+                if should_log:
+                    logger.info(f"Iteration {iteration + 1} (init {init + 1}) log likelihood: {current_log_likelihood:.4f}")
 
             # Keep best initialization
             if current_log_likelihood > best_log_likelihood:
@@ -258,19 +555,35 @@ class GMMCluster:
                 best_params = {
                     'pi': self.pi.copy(),
                     'mu': self.mu.copy(),
-                    'Sigma': self.Sigma.copy(),
+                    'sigma': self.sigma.copy(),
                     'log_likelihood_history': log_likelihood_history
                 }
+            if should_log:
+                logger.info(f"Best log likelihood: {best_log_likelihood:.4f}")
 
         # Set best parameters
         self.pi = best_params['pi']
         self.mu = best_params['mu']
-        self.Sigma = best_params['Sigma']
+        self.sigma = best_params['sigma']
         self.log_likelihood_history = best_params['log_likelihood_history']
         self.final_log_likelihood = best_log_likelihood
         self.is_fitted = True
 
-        print(f"Final log likelihood: {self.final_log_likelihood:.4f}")
+        if should_log:
+            logger.info(f"Final log likelihood: {self.final_log_likelihood:.4f}")
+
+        # Validate cluster quality
+        if validate_quality:
+            is_valid, message = self._validate_cluster_quality(X)
+            if not is_valid:
+                self.is_fitted = False  # Mark as not fitted
+                raise ValueError(f"Cluster quality does not meet requirements: {message}")
+        else:
+            # Calculate quality metrics even if not validating (for reporting)
+            self.cluster_quality_metrics = self._calculate_cluster_compactness(X)
+            if self.min_cluster_separation is not None:
+                self.cluster_quality_metrics['cluster_separation'] = self._calculate_cluster_separation()
+
         return self
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -296,30 +609,29 @@ class GMMCluster:
             X: Input data (N, d)
 
         Returns:
-            Cluster labels (N,)
+            ClusterResult with labels, confidence mask, and quality metrics
         """
         probabilities = self.predict_proba(X)
         labels = np.argmax(probabilities, axis=1)
         confident_mask = np.max(probabilities, axis=1) >= self.confidence
-        return ClusterResult(labels, confident_mask)
+        return ClusterResult(labels, confident_mask, self.cluster_quality_metrics)
 
-    def predict_with_confidence(self, X: np.ndarray, confidence_threshold: float = 0.8) -> ClusterResult:
+    def predict_with_confidence(self, X: np.ndarray) -> ClusterResult:
         """
         Predict with confidence threshold
 
         Args:
             X: Input data (N, d)
-            confidence_threshold: Minimum confidence for classification (eta)
 
         Returns:
-            ClusterResult: Cluster result
+            ClusterResult with labels, confidence mask, and quality metrics
         """
         probabilities = self.predict_proba(X)
         labels = np.argmax(probabilities, axis=1)
         max_probabilities = np.max(probabilities, axis=1)
-        confident_mask = max_probabilities >= confidence_threshold
+        confident_mask = max_probabilities >= self.confidence
 
-        return ClusterResult(labels, confident_mask)
+        return ClusterResult(labels, confident_mask, self.cluster_quality_metrics)
 
     def mahalanobis_distance(self, X: np.ndarray, cluster_id: int) -> np.ndarray:
         """
@@ -335,14 +647,28 @@ class GMMCluster:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before calculating distances")
 
-        if cluster_id >= self.K:
-            raise ValueError(f"Cluster ID must be < {self.K}")
+        if cluster_id >= self.k:
+            raise ValueError(f"Cluster ID must be < {self.k}")
+
+        # Check for NaN/Inf in input data
+        if not np.all(np.isfinite(X)):
+            raise ValueError("Input data contains NaN or Inf values")
+
+        # Check for NaN/Inf in cluster parameters
+        if not np.all(np.isfinite(self.mu[cluster_id])):
+            raise ValueError(f"Cluster {cluster_id} mean contains NaN or Inf values")
+        if not np.all(np.isfinite(self.sigma[cluster_id])):
+            raise ValueError(f"Cluster {cluster_id} covariance contains NaN or Inf values")
 
         diff = X - self.mu[cluster_id]
-        Sigma_inv = inv(self.Sigma[cluster_id])
+
+        try:
+            sigma_inv = inv(self.sigma[cluster_id])
+        except np.linalg.LinAlgError as e:
+            raise ValueError(f"Cannot invert covariance matrix for cluster {cluster_id}: {e}")
 
         # Calculate squared Mahalanobis distance
-        distances_squared = np.sum((diff @ Sigma_inv) * diff, axis=1)
+        distances_squared = np.sum((diff @ sigma_inv) * diff, axis=1)
 
         # Return distance (not squared)
         return np.sqrt(distances_squared)
@@ -377,9 +703,10 @@ class GMMCluster:
             raise ValueError("Model must be fitted before calculating AIC")
 
         # Number of parameters: K-1 mixture weights + K*d means + K*d*(d+1)/2 covariance parameters
-        n_params = (self.K - 1) + self.K * self.n_features + self.K * self.n_features * (self.n_features + 1) // 2
+        n_params = (self.k - 1) + self.k * self.n_features + self.k * self.n_features * (self.n_features + 1) // 2
 
         aic = -2 * self.final_log_likelihood + 2 * n_params
+        logger.info(f"AIC = {aic:.4f}")
 
         return aic
 
@@ -393,22 +720,29 @@ class GMMCluster:
         if not self.is_fitted:
             raise ValueError("Model must be fitted before getting info")
 
-        return {
-            'n_components': self.K,
+        info = {
+            'n_components': self.k,
             'n_features': self.n_features,
             'n_samples': self.n_samples,
             'mixture_weights': self.pi,
             'means': self.mu,
-            'covariances': self.Sigma,
+            'covariances': self.sigma,
             'log_likelihood': self.final_log_likelihood,
             'aic': self.calculate_aic(),
             'converged_iterations': len(self.log_likelihood_history)
         }
 
+        # Add cluster quality metrics if calculated
+        if self.cluster_quality_metrics is not None:
+            info['cluster_quality_metrics'] = self.cluster_quality_metrics
+
+        return info
+
 
 def select_optimal_k_with_aic(X: np.ndarray, k_range: range, **gmm_params) -> Tuple[int, Dict[int, float]]:
     """
-    Select optimal number of components using AIC criterion
+    Select optimal K using AIC criterion
+    Only rank 0 performs K selection, other ranks participate in log likelihood calculation
 
     Args:
         X: Input data (N, d)
@@ -418,16 +752,40 @@ def select_optimal_k_with_aic(X: np.ndarray, k_range: range, **gmm_params) -> Tu
     Returns:
         (optimal_k, aic_scores): Best K and AIC scores for all tested K values
     """
-    aic_scores = {}
+    # Check if we're in an MPI environment
+    if MPI_AVAILABLE and gmm_params.get('use_mpi', False):
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+    else:
+        rank = 0
+        comm = None
 
-    for k in k_range:
-        print(f"Testing K = {k}...")
-        gmm = GMMCluster(n_components=k, **gmm_params)
-        gmm.fit(X)
-        aic_scores[k] = gmm.calculate_aic()
-        print(f"K = {k}, AIC = {aic_scores[k]:.4f}")
+    # Only rank 0 performs K selection loop
+    if rank == 0:
+        aic_scores = {}
 
-    optimal_k = min(aic_scores.keys(), key=lambda k: aic_scores[k])
-    print(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
+        for k in k_range:
+            logger.info(f"Testing K = {k}...")
+            gmm = GMMCluster(n_components=k, **gmm_params)
+            gmm.fit(X, validate_quality=False)
+            aic_scores[k] = gmm.calculate_aic()
+            logger.info(f"K = {k}, AIC = {aic_scores[k]:.4f}")
 
-    return optimal_k, aic_scores
+        optimal_k = min(aic_scores.keys(), key=lambda k: aic_scores[k])
+        logger.info(f"Optimal K = {optimal_k} (AIC = {aic_scores[optimal_k]:.4f})")
+
+        result = (optimal_k, aic_scores)
+    else:
+        # Other ranks participate in log likelihood calculation during fit
+        # They need to call fit() for each K to participate in MPI collective operations
+        for k in k_range:
+            gmm = GMMCluster(n_components=k, **gmm_params)
+            gmm.fit(X, validate_quality=False)
+
+        result = None
+
+    # Broadcast result to all processes if using MPI
+    if comm is not None:
+        result = comm.bcast(result, root=0)
+
+    return result

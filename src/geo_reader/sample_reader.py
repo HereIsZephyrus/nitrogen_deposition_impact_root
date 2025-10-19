@@ -3,9 +3,10 @@ Sample data reader for CSV files containing field measurements
 """
 import os
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class Sample:
 
     NITROGEN_COLUMNS = ['n_addition', 'fertilizer_type', 'treatment_date', 'duration']
 
-    def __init__(self, sample_file: str):
+    def __init__(self, sample_file: str, grouped: bool = True):
         """
         Initialize sample reader
 
@@ -39,6 +40,7 @@ class Sample:
         """
         self.sample_file = sample_file
         self._data: Optional[pd.DataFrame] = None
+        self.grouped = grouped
         self._load_data()
 
     def _load_data(self) -> None:
@@ -55,7 +57,8 @@ class Sample:
 
     def get_location(self) -> List[Tuple[float, float]]:
         """
-        Get sample locations as (longitude, latitude) tuples
+        Get sample locations as (longitude, latitude) tuples, deduplicated by group
+        (only the first location for each group ID is returned)
 
         Returns:
             List of (longitude, latitude) coordinate tuples
@@ -64,19 +67,29 @@ class Sample:
             return []
 
         locations = []
+        seen_groups = set()
+
         for _, row in self._data.iterrows():
             try:
+                # Check if group column exists and get group id
+                if 'group' in self._data.columns and self.grouped:
+                    group_id = int(row['group'])
+                    if group_id in seen_groups:
+                        continue  # Skip this row if we've already seen this group
+                    seen_groups.add(group_id)
+
                 lon = float(row['longitude'])
                 lat = float(row['latitude'])
                 if not np.isnan(lon) and not np.isnan(lat):
                     locations.append((lon, lat))
                 else:
-                    logger.warning("Invalid coordinates or year in row %s", row.get('data_id', 'unknown'))
+                    logger.warning("Invalid coordinates in row %s", row.get('data_id', 'unknown'))
             except (ValueError, KeyError) as e:
-                logger.warning("Error parsing coordinates or year: %s", e)
+                logger.warning("Error parsing coordinates or group: %s", e)
                 continue
 
-        logger.info("Extracted %d valid locations", len(locations))
+        logger.info("Extracted %d unique group locations (original: %d records)", 
+                   len(locations), len(self._data))
         return locations
 
     def get_soil(self) -> np.ndarray:
@@ -96,10 +109,17 @@ class Sample:
             logger.warning("No soil columns found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            # Keep first occurrence of each group
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Use pd.to_numeric to safely convert to float
         soil_data = []
         for col in available_cols:
-            numeric_values = pd.to_numeric(self._data[col], errors='coerce').values
+            numeric_values = pd.to_numeric(deduplicated_data[col], errors='coerce').values
             soil_data.append(numeric_values)
 
         soil_data = np.column_stack(soil_data)
@@ -128,21 +148,27 @@ class Sample:
             logger.warning("No nitrogen columns found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Process each column
         nitrogen_data = []
 
         for col in self.NITROGEN_COLUMNS:
-            if col not in self._data.columns:
+            if col not in deduplicated_data.columns:
                 logger.warning("Column %s not found, skipping", col)
                 continue
 
             if col in ['n_addition', 'duration']:
                 # Numeric columns - use pd.to_numeric with errors='coerce' to handle non-numeric values
-                numeric_values = pd.to_numeric(self._data[col], errors='coerce').values
+                numeric_values = pd.to_numeric(deduplicated_data[col], errors='coerce').values
                 nitrogen_data.append(numeric_values)
             else:
                 # Categorical columns (fertilizer_type, treatment_date)
-                cat_data = self._data[col].astype('category')
+                cat_data = deduplicated_data[col].astype('category')
                 nitrogen_data.append(cat_data.cat.codes.values.astype(float))
 
         # Stack columns
@@ -169,8 +195,14 @@ class Sample:
             logger.warning("Vegetation type column not found in dataset")
             return np.array([])
 
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
         # Encode vegetation types as categories
-        vegetation = self._data[col_name].astype('category')
+        vegetation = deduplicated_data[col_name].astype('category')
         vegetation_codes = vegetation.cat.codes.values
 
         logger.info("Extracted vegetation data: %d samples, %d unique types",
@@ -244,6 +276,206 @@ class Sample:
         logger.info("Extracted biomass data: %d samples", len(n_biomass))
 
         return n_biomass, ck_biomass
+
+    def get_biomass_normalized_by_group(self) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Get root biomass data (N addition and control) normalized by group
+
+        For each group, the mean and standard deviation of the combined n_biomass and ck_biomass are calculated,
+        and then the data in each group is normalized by z-score.
+
+        Returns:
+            Tuple of (normalized_n_biomass, normalized_ck_biomass) arrays
+        """
+        if self._data is None:
+            return np.array([]), np.array([])
+
+        n_col = 'root_biomass_n_addation'
+        ck_col = 'root_biomass_ck'
+
+        if n_col not in self._data.columns or ck_col not in self._data.columns:
+            logger.warning("Biomass columns not found in dataset")
+            return np.array([]), np.array([])
+
+        if 'group' not in self._data.columns:
+            logger.warning("Group column not found in dataset")
+            return np.array([]), np.array([])
+
+        data_with_groups = self._data[['group', n_col, ck_col]].copy()
+
+        # Convert to numeric type
+        data_with_groups[n_col] = pd.to_numeric(data_with_groups[n_col], errors='coerce')
+        data_with_groups[ck_col] = pd.to_numeric(data_with_groups[ck_col], errors='coerce')
+
+        if len(data_with_groups) == 0:
+            logger.warning("No valid biomass data after removing NaN values")
+            return np.array([]), np.array([])
+
+        normalized_n = np.full(len(data_with_groups), np.nan)
+        normalized_ck = np.full(len(data_with_groups), np.nan)
+
+        for group_id in data_with_groups['group'].unique():
+            group_mask = data_with_groups['group'] == group_id
+            group_data = data_with_groups[group_mask]
+            n_values = group_data[n_col].values
+            ck_values = group_data[ck_col].values
+            combined_values = np.concatenate([n_values, ck_values])
+
+            group_min = np.min(combined_values)
+            group_max = np.max(combined_values)
+
+            if group_max == group_min:
+                logger.warning("Max equals min for group %s, using normalized value = 0", group_id)
+                group_range = 1
+            else:
+                group_range = group_max - group_min
+
+            group_indices = np.where(group_mask)[0]
+            normalized_n[group_indices] = (n_values - group_min) / group_range
+            normalized_ck[group_indices] = (ck_values - group_min) / group_range
+
+            logger.debug("Group %s: min=%.3f, max=%.3f, n_samples=%d",
+                        group_id, group_min, group_max, len(group_data))
+
+        logger.info("Normalized biomass data by group: %d samples", len(normalized_n))
+
+        return normalized_n, normalized_ck
+
+    def get_categorical(self) -> np.ndarray:
+        """
+        Get all categorical variables (fertilizer_type, treatment_date, vegetation_type)
+
+        Returns:
+            Array with shape (n_samples, n_categorical_features) containing category codes
+        """
+        if self._data is None:
+            return np.array([])
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        categorical_data = []
+
+        # Get vegetation type
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            veg_data = deduplicated_data['ecosystem/vegetation_type'].astype('category')
+            categorical_data.append(veg_data.cat.codes.values.astype(float))
+
+        # Stack columns if we have any categorical data
+        if categorical_data:
+            result = np.column_stack(categorical_data)
+            logger.info("Extracted categorical data: %d samples, %d features", 
+                       result.shape[0], result.shape[1])
+        else:
+            logger.warning("No categorical columns found in dataset")
+            result = np.array([])
+
+        return result
+
+    def get_categorical_onehot(self) -> Tuple[np.ndarray, List[str]]:
+        """
+        Get all categorical variables as one-hot encoded arrays
+
+        Returns:
+            Tuple of (one_hot_encoded_array, feature_names)
+            - one_hot_encoded_array: Array with shape (n_samples, n_onehot_features)
+            - feature_names: List of feature names for each one-hot column
+        """
+        if self._data is None:
+            return np.array([]), []
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        # Collect all categorical columns and their data
+        categorical_columns = []
+        categorical_arrays = []
+
+        # Get fertilizer type
+        if 'fertilizer_type' in deduplicated_data.columns:
+            fert_data = deduplicated_data['fertilizer_type'].values.reshape(-1, 1)
+            categorical_columns.append('fertilizer_type')
+            categorical_arrays.append(fert_data)
+
+        # Get treatment date
+        if 'treatment_date' in deduplicated_data.columns:
+            treat_data = deduplicated_data['treatment_date'].values.reshape(-1, 1)
+            categorical_columns.append('treatment_date')
+            categorical_arrays.append(treat_data)
+
+        # Get vegetation type
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            veg_data = deduplicated_data['ecosystem/vegetation_type'].values.reshape(-1, 1)
+            categorical_columns.append('ecosystem/vegetation_type')
+            categorical_arrays.append(veg_data)
+
+        if not categorical_arrays:
+            logger.warning("No categorical columns found for one-hot encoding")
+            return np.array([]), []
+
+        # Combine all categorical data
+        all_categorical_data = np.concatenate(categorical_arrays, axis=1)
+
+        # Apply one-hot encoding
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        onehot_encoded = encoder.fit_transform(all_categorical_data)
+
+        # Generate feature names
+        feature_names = []
+        for i, col_name in enumerate(categorical_columns):
+            categories = encoder.categories_[i]
+            for category in categories:
+                feature_names.append(f"{col_name}_{category}")
+
+        logger.info("One-hot encoded categorical data: %d samples, %d features", 
+                   onehot_encoded.shape[0], onehot_encoded.shape[1])
+
+        return onehot_encoded, feature_names
+
+    def get_categorical_info(self) -> Dict[str, List[str]]:
+        """
+        Get information about categorical variable categories
+
+        Returns:
+            Dictionary mapping column names to their unique categories
+        """
+        if self._data is None:
+            return {}
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        categorical_info = {}
+
+        # Get fertilizer type categories
+        if 'fertilizer_type' in deduplicated_data.columns:
+            categories = deduplicated_data['fertilizer_type'].dropna().unique().tolist()
+            categorical_info['fertilizer_type'] = sorted(categories)
+
+        # Get treatment date categories
+        if 'treatment_date' in deduplicated_data.columns:
+            categories = deduplicated_data['treatment_date'].dropna().unique().tolist()
+            categorical_info['treatment_date'] = sorted(categories)
+
+        # Get vegetation type categories
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            categories = deduplicated_data['ecosystem/vegetation_type'].dropna().unique().tolist()
+            categorical_info['ecosystem/vegetation_type'] = sorted(categories)
+
+        logger.info("Categorical info extracted for %d variables", len(categorical_info))
+        for col, cats in categorical_info.items():
+            logger.info("  %s: %d categories (%s)", col, len(cats), ', '.join(map(str, cats[:5])) + ('...' if len(cats) > 5 else ''))
+
+        return categorical_info
 
     def get_dataframe(self) -> pd.DataFrame:
         """
