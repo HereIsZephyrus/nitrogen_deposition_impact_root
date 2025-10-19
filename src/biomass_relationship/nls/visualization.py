@@ -12,29 +12,29 @@ from .nls_model import ModelFitResult
 
 logger = logging.getLogger(__name__)
 
-# 设置中文字体支持
-matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans']  # 支持中文
-matplotlib.rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
+# Set font support for Chinese
+matplotlib.rcParams['font.sans-serif'] = ['Unifont', 'DejaVu Sans']  # Support Chinese
+matplotlib.rcParams['axes.unicode_minus'] = False  # Solve the problem of displaying negative signs
 
 
 def plot_model_comparison(results: Dict[str, ModelFitResult],
                           save_path: Optional[str] = None,
                           figsize: Tuple[int, int] = (15, 10)) -> plt.Figure:
     """
-    绘制模型比较图
+    Plot model comparison figure
 
     Args:
-        results: 模型拟合结果字典
-        save_path: 保存路径
-        figsize: 图形大小
+        results: dictionary of model fitting results
+        save_path: save path
+        figsize: figure size
 
     Returns:
-        matplotlib Figure对象
+        matplotlib Figure object
     """
     fig, axes = plt.subplots(2, 2, figsize=figsize)
-    fig.suptitle('NLS模型比较', fontsize=16, fontweight='bold')
+    fig.suptitle('NLS model comparison', fontsize=16, fontweight='bold')
 
-    # 准备数据
+    # Prepare data
     model_names = []
     r2_scores = []
     rmse_scores = []
@@ -51,36 +51,36 @@ def plot_model_comparison(results: Dict[str, ModelFitResult],
 
     x_pos = np.arange(len(model_names))
 
-    # R² 分数
+    # R² scores
     axes[0, 0].bar(x_pos, r2_scores, alpha=0.7, color='steelblue')
     axes[0, 0].set_ylabel('R²', fontsize=12)
-    axes[0, 0].set_title('决定系数 (R²)', fontsize=12)
+    axes[0, 0].set_title('Coefficient of determination (R²)', fontsize=12)
     axes[0, 0].set_xticks(x_pos)
     axes[0, 0].set_xticklabels(model_names, rotation=45, ha='right')
     axes[0, 0].grid(axis='y', alpha=0.3)
-    axes[0, 0].axhline(y=0.7, color='r', linestyle='--', alpha=0.5, label='0.7阈值')
+    axes[0, 0].axhline(y=0.7, color='r', linestyle='--', alpha=0.5, label='0.7 threshold')
     axes[0, 0].legend()
 
-    # RMSE
+    # RMSE scores
     axes[0, 1].bar(x_pos, rmse_scores, alpha=0.7, color='coral')
     axes[0, 1].set_ylabel('RMSE', fontsize=12)
-    axes[0, 1].set_title('均方根误差 (RMSE)', fontsize=12)
+    axes[0, 1].set_title('Root mean squared error (RMSE)', fontsize=12)
     axes[0, 1].set_xticks(x_pos)
     axes[0, 1].set_xticklabels(model_names, rotation=45, ha='right')
     axes[0, 1].grid(axis='y', alpha=0.3)
 
-    # AIC
+    # AIC scores
     axes[1, 0].bar(x_pos, aic_scores, alpha=0.7, color='lightgreen')
     axes[1, 0].set_ylabel('AIC', fontsize=12)
-    axes[1, 0].set_title('赤池信息准则 (AIC, 越小越好)', fontsize=12)
+    axes[1, 0].set_title('Akaike information criterion (AIC, lower is better)', fontsize=12)
     axes[1, 0].set_xticks(x_pos)
     axes[1, 0].set_xticklabels(model_names, rotation=45, ha='right')
     axes[1, 0].grid(axis='y', alpha=0.3)
 
-    # BIC
+    # BIC scores
     axes[1, 1].bar(x_pos, bic_scores, alpha=0.7, color='plum')
     axes[1, 1].set_ylabel('BIC', fontsize=12)
-    axes[1, 1].set_title('贝叶斯信息准则 (BIC, 越小越好)', fontsize=12)
+    axes[1, 1].set_title('Bayesian information criterion (BIC, lower is better)', fontsize=12)
     axes[1, 1].set_xticks(x_pos)
     axes[1, 1].set_xticklabels(model_names, rotation=45, ha='right')
     axes[1, 1].grid(axis='y', alpha=0.3)
@@ -89,7 +89,7 @@ def plot_model_comparison(results: Dict[str, ModelFitResult],
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"模型比较图已保存至: {save_path}")
+        logger.info(f"Model comparison figure saved to: {save_path}")
 
     return fig
 
@@ -99,56 +99,55 @@ def plot_residuals(result: ModelFitResult,
                    save_path: Optional[str] = None,
                    figsize: Tuple[int, int] = (12, 10)) -> plt.Figure:
     """
-    绘制残差诊断图
+    draw residual diagnostic figure
 
     Args:
-        result: 模型拟合结果
-        model_name: 模型名称
-        save_path: 保存路径
-        figsize: 图形大小
+        result: model fitting result
+        model_name: model name
+        save_path: save path
+        figsize: figure size
 
     Returns:
-        matplotlib Figure对象
+        matplotlib Figure object
     """
     fig, axes = plt.subplots(2, 2, figsize=figsize)
-    fig.suptitle(f'{model_name} - 残差诊断', fontsize=16, fontweight='bold')
+    fig.suptitle(f'{model_name} - Residual diagnostic', fontsize=16, fontweight='bold')
 
     predictions = result.predictions
     residuals = result.residuals
 
-    # 1. 残差 vs 预测值
+    # 1. Residual vs predicted value
     axes[0, 0].scatter(predictions, residuals, alpha=0.6, s=50)
     axes[0, 0].axhline(y=0, color='r', linestyle='--', linewidth=2)
-    axes[0, 0].set_xlabel('预测值', fontsize=12)
-    axes[0, 0].set_ylabel('残差', fontsize=12)
-    axes[0, 0].set_title('残差 vs 预测值', fontsize=12)
+    axes[0, 0].set_xlabel('Predicted value', fontsize=12)
+    axes[0, 0].set_ylabel('Residual', fontsize=12)
+    axes[0, 0].set_title('Residual vs predicted value', fontsize=12)
     axes[0, 0].grid(alpha=0.3)
 
-    # 2. Q-Q图（正态性检验）
+    # 2. Q-Q plot (normality test)
     from scipy import stats
     stats.probplot(residuals, dist="norm", plot=axes[0, 1])
-    axes[0, 1].set_title('Q-Q图 (正态性)', fontsize=12)
+    axes[0, 1].set_title('Q-Q plot (normality)', fontsize=12)
     axes[0, 1].grid(alpha=0.3)
 
-    # 3. 残差直方图
+    # 3. Residual histogram
     axes[1, 0].hist(residuals, bins=20, alpha=0.7, color='steelblue', edgecolor='black')
     axes[1, 0].axvline(x=0, color='r', linestyle='--', linewidth=2)
-    axes[1, 0].set_xlabel('残差', fontsize=12)
-    axes[1, 0].set_ylabel('频数', fontsize=12)
-    axes[1, 0].set_title('残差分布', fontsize=12)
+    axes[1, 0].set_xlabel('Residual', fontsize=12)
+    axes[1, 0].set_ylabel('Frequency', fontsize=12)
+    axes[1, 0].set_title('Residual distribution', fontsize=12)
     axes[1, 0].grid(axis='y', alpha=0.3)
 
-    # 4. 观测值 vs 预测值
-    # 添加实际值（从预测值和残差反算）
+    # 4. Observed value vs predicted value
     actual = predictions + residuals
     axes[1, 1].scatter(actual, predictions, alpha=0.6, s=50)
-    # 添加理想拟合线 (y=x)
+    # Add ideal fit line (y=x)
     min_val = min(actual.min(), predictions.min())
     max_val = max(actual.max(), predictions.max())
-    axes[1, 1].plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='理想拟合')
-    axes[1, 1].set_xlabel('观测值', fontsize=12)
-    axes[1, 1].set_ylabel('预测值', fontsize=12)
-    axes[1, 1].set_title(f'观测值 vs 预测值 (R²={result.r2:.4f})', fontsize=12)
+    axes[1, 1].plot([min_val, max_val], [min_val, max_val], 'r--', linewidth=2, label='Ideal fit')
+    axes[1, 1].set_xlabel('Observed value', fontsize=12)
+    axes[1, 1].set_ylabel('Predicted value', fontsize=12)
+    axes[1, 1].set_title(f'Observed value vs predicted value (R²={result.r2:.4f})', fontsize=12)
     axes[1, 1].legend()
     axes[1, 1].grid(alpha=0.3)
 
@@ -156,7 +155,7 @@ def plot_residuals(result: ModelFitResult,
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"残差诊断图已保存至: {save_path}")
+        logger.info(f"Residual diagnostic figure saved to: {save_path}")
 
     return fig
 
@@ -166,32 +165,32 @@ def plot_parameter_importance(result: ModelFitResult,
                               save_path: Optional[str] = None,
                               figsize: Tuple[int, int] = (10, 6)) -> plt.Figure:
     """
-    绘制参数重要性图
+    Plot parameter importance figure
 
     Args:
-        result: 模型拟合结果
-        model_name: 模型名称
-        save_path: 保存路径
-        figsize: 图形大小
+        result: model fitting result
+        model_name: model name
+        save_path: save path
+        figsize: figure size
 
     Returns:
-        matplotlib Figure对象
+        matplotlib Figure object
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    # 计算参数的标准化重要性（绝对值）
+    # Calculate the standardized importance of parameters (absolute value)
     param_importance = np.abs(result.params)
 
-    # 排序
+    # Sort
     sorted_idx = np.argsort(param_importance)[::-1]
     sorted_importance = param_importance[sorted_idx]
     sorted_names = [result.param_names[i] for i in sorted_idx]
 
-    # 绘制条形图
+    # Plot bar chart
     y_pos = np.arange(len(sorted_names))
     bars = ax.barh(y_pos, sorted_importance, alpha=0.7)
 
-    # 为正负参数使用不同颜色
+    # Use different colors for positive and negative parameters
     for i, (idx, bar) in enumerate(zip(sorted_idx, bars)):
         if result.params[idx] >= 0:
             bar.set_color('steelblue')
@@ -201,15 +200,15 @@ def plot_parameter_importance(result: ModelFitResult,
     ax.set_yticks(y_pos)
     ax.set_yticklabels(sorted_names)
     ax.invert_yaxis()
-    ax.set_xlabel('参数绝对值', fontsize=12)
-    ax.set_title(f'{model_name} - 参数重要性', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Parameter absolute value', fontsize=12)
+    ax.set_title(f'{model_name} - Parameter importance', fontsize=14, fontweight='bold')
     ax.grid(axis='x', alpha=0.3)
 
-    # 添加图例
+    # Add legend
     from matplotlib.patches import Patch
     legend_elements = [
-        Patch(facecolor='steelblue', label='正参数'),
-        Patch(facecolor='coral', label='负参数')
+        Patch(facecolor='steelblue', label='Positive parameters'),
+        Patch(facecolor='coral', label='Negative parameters')
     ]
     ax.legend(handles=legend_elements)
 
@@ -217,7 +216,7 @@ def plot_parameter_importance(result: ModelFitResult,
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"参数重要性图已保存至: {save_path}")
+        logger.info(f"Parameter importance figure saved to: {save_path}")
 
     return fig
 
@@ -229,28 +228,28 @@ def plot_nitrogen_response_curve(nitrogen_range: np.ndarray,
                                  save_path: Optional[str] = None,
                                  figsize: Tuple[int, int] = (12, 8)) -> plt.Figure:
     """
-    绘制氮沉降响应曲线
+    Plot nitrogen response curve
 
     Args:
-        nitrogen_range: 氮沉降范围
-        biomass_predictions: 各模型的生物量预测，字典格式 {model_name: predictions}
-        actual_nitrogen: 实际观测的氮沉降值（可选）
-        actual_biomass: 实际观测的生物量值（可选）
-        save_path: 保存路径
-        figsize: 图形大小
+        nitrogen_range: nitrogen range
+        biomass_predictions: biomass predictions for each model, dictionary format {model_name: predictions}
+        actual_nitrogen: actual observed nitrogen values (optional)
+        actual_biomass: actual observed biomass values (optional)
+        save_path: save path
+        figsize: figure size
 
     Returns:
-        matplotlib Figure对象
+        matplotlib Figure object
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    # 绘制实际观测点
+    # Plot actual observed points
     if actual_nitrogen is not None and actual_biomass is not None:
         ax.scatter(actual_nitrogen, actual_biomass, s=50, alpha=0.6,
                   color='black', label='观测值', zorder=5)
 
-    # 绘制各模型的预测曲线
-    # 使用colormap生成颜色
+    # Plot predictions for each model
+    # Use colormap to generate colors
     cmap = plt.get_cmap('Set3')
     colors = [cmap(i) for i in np.linspace(0, 1, len(biomass_predictions))]
 
@@ -258,9 +257,9 @@ def plot_nitrogen_response_curve(nitrogen_range: np.ndarray,
         ax.plot(nitrogen_range, predictions, linewidth=2.5,
                label=model_name, color=color, alpha=0.8)
 
-    ax.set_xlabel('氮添加量 (Nitrogen Addition)', fontsize=13)
-    ax.set_ylabel('生物量 (Biomass)', fontsize=13)
-    ax.set_title('氮沉降对生物量的响应曲线', fontsize=15, fontweight='bold')
+    ax.set_xlabel('Nitrogen Addition', fontsize=13)
+    ax.set_ylabel('Biomass', fontsize=13)
+    ax.set_title('Nitrogen response curve', fontsize=15, fontweight='bold')
     ax.legend(loc='best', fontsize=10)
     ax.grid(alpha=0.3)
 
@@ -268,7 +267,7 @@ def plot_nitrogen_response_curve(nitrogen_range: np.ndarray,
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"氮响应曲线已保存至: {save_path}")
+        logger.info(f"Nitrogen response curve saved to: {save_path}")
 
     return fig
 
@@ -281,45 +280,45 @@ def plot_interaction_effects(nitrogen_values: np.ndarray,
                             save_path: Optional[str] = None,
                             figsize: Tuple[int, int] = (10, 8)) -> plt.Figure:
     """
-    绘制氮沉降与PCA分量的交互效应热图
+    Plot nitrogen response heatmap with PCA components
 
     Args:
-        nitrogen_values: 氮沉降值数组
-        pc_values: PCA分量值数组
-        biomass_grid: 生物量预测网格 (shape: len(nitrogen_values) x len(pc_values))
-        pc_idx: PCA分量索引
-        model_name: 模型名称
-        save_path: 保存路径
-        figsize: 图形大小
+        nitrogen_values: nitrogen values array
+        pc_values: PCA components values array
+        biomass_grid: biomass predictions grid (shape: len(nitrogen_values) x len(pc_values))
+        pc_idx: PCA component index
+        model_name: model name
+        save_path: save path
+        figsize: figure size
 
     Returns:
-        matplotlib Figure对象
+        matplotlib Figure object
     """
     fig, ax = plt.subplots(figsize=figsize)
 
-    # 绘制热图
+    # Plot heatmap
     im = ax.contourf(nitrogen_values, pc_values, biomass_grid.T,
                      levels=20, cmap='RdYlGn', alpha=0.8)
 
-    # 添加等高线
+    # Add contours
     contours = ax.contour(nitrogen_values, pc_values, biomass_grid.T,
                          levels=10, colors='black', linewidths=0.5, alpha=0.4)
     ax.clabel(contours, inline=True, fontsize=8, fmt='%.2f')
 
-    # 添加颜色条
+    # Add color bar
     cbar = plt.colorbar(im, ax=ax)
-    cbar.set_label('生物量 (Biomass)', fontsize=12)
+    cbar.set_label('Biomass', fontsize=12)
 
-    ax.set_xlabel('氮添加量 (Nitrogen Addition)', fontsize=12)
-    ax.set_ylabel(f'PC{pc_idx+1} 值', fontsize=12)
-    ax.set_title(f'{model_name} - 氮沉降与PC{pc_idx+1}的交互效应',
+    ax.set_xlabel('Nitrogen Addition', fontsize=12)
+    ax.set_ylabel(f'PC{pc_idx+1} value', fontsize=12)
+    ax.set_title(f'{model_name} - Nitrogen response with PC{pc_idx+1} interaction effect',
                 fontsize=14, fontweight='bold')
 
     plt.tight_layout()
 
     if save_path:
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        logger.info(f"交互效应图已保存至: {save_path}")
+        logger.info(f"Interaction effect figure saved to: {save_path}")
 
     return fig
 
@@ -327,30 +326,30 @@ def plot_interaction_effects(nitrogen_values: np.ndarray,
 def generate_summary_table(results: Dict[str, ModelFitResult],
                            save_path: Optional[str] = None) -> pd.DataFrame:
     """
-    生成模型对比摘要表
+    Generate model comparison summary table
 
     Args:
-        results: 模型拟合结果字典
-        save_path: 保存路径（CSV格式）
+        results: model fitting results dictionary
+        save_path: save path (CSV format)
 
     Returns:
-        摘要DataFrame
+        summary DataFrame
     """
     summary_data = []
 
     for model_name, result in results.items():
         row = {
-            '模型名称': model_name,
-            '收敛状态': '成功' if result.convergence else '失败',
+            'Model name': model_name,
+            'Convergence status': 'Success' if result.convergence else 'Failed',
             'R²': result.r2 if result.convergence else np.nan,
             'RMSE': result.rmse if result.convergence else np.nan,
             'MAE': result.mae if result.convergence else np.nan,
             'AIC': result.aic if result.convergence else np.inf,
             'BIC': result.bic if result.convergence else np.inf,
-            '参数数量': len(result.params)
+            'Number of parameters': len(result.params)
         }
 
-        # 添加各个参数值
+        # Add each parameter value
         if result.convergence:
             for param_name, param_val in zip(result.param_names, result.params):
                 row[f'{param_name}'] = param_val
@@ -359,12 +358,12 @@ def generate_summary_table(results: Dict[str, ModelFitResult],
 
     df = pd.DataFrame(summary_data)
 
-    # 按AIC排序
+    # Sort by AIC
     df = df.sort_values('AIC', ascending=True)
 
     if save_path:
         df.to_csv(save_path, index=False, encoding='utf-8-sig')
-        logger.info(f"摘要表已保存至: {save_path}")
+        logger.info(f"Summary table saved to: {save_path}")
 
     return df
 

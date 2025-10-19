@@ -1,8 +1,7 @@
 """
-非线性最小二乘(NLS)模型实现
-探索氮沉降如何通过影响PCA降维后的变量来影响生物量
+Apply NLS model to explore the relationship between nitrogen deposition and biomass
 
-模型假设：nitrogen_addition -> PCA_components -> biomass
+Model assumption: nitrogen_addition -> PCA_components -> biomass
 """
 
 import logging
@@ -19,34 +18,34 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ModelFitResult:
-    """NLS模型拟合结果"""
+    """NLS model fitting result"""
     params: np.ndarray  # 模型参数
-    params_std: np.ndarray  # 参数标准误
-    r2: float  # R²决定系数
-    rmse: float  # 均方根误差
-    mae: float  # 平均绝对误差
-    aic: float  # 赤池信息准则
-    bic: float  # 贝叶斯信息准则
-    residuals: np.ndarray  # 残差
-    predictions: np.ndarray  # 预测值
-    convergence: bool  # 是否收敛
-    message: str  # 拟合信息
-    param_names: List[str]  # 参数名称
+    params_std: np.ndarray  # parameter standard error
+    r2: float  # R² coefficient of determination
+    rmse: float  # root mean squared error
+    mae: float  # mean absolute error
+    aic: float  # Akaike information criterion
+    bic: float  # Bayesian information criterion
+    residuals: np.ndarray  # residuals
+    predictions: np.ndarray  # predictions
+    convergence: bool  # convergence
+    message: str  # fitting information
+    param_names: List[str]  # parameter names
 
 
 class NLSModel:
     """
-    非线性最小二乘模型基类
+    Base class for non-linear least squares models
 
-    所有具体模型都应继承此类并实现model_func方法
+    All specific models should inherit this class and implement the model_func method
     """
 
     def __init__(self, name: str = "NLS Model"):
         """
-        初始化NLS模型
+        Initialize NLS model
 
         Args:
-            name: 模型名称
+            name: model name
         """
         self.name = name
         self.params = None
@@ -55,41 +54,41 @@ class NLSModel:
 
     def model_func(self, X: np.ndarray, *params) -> np.ndarray:
         """
-        模型函数 - 子类必须实现
+        Model function - subclasses must implement this method
 
         Args:
-            X: 输入特征矩阵 [nitrogen_add, PC1, PC2, ..., PCn]
-            *params: 模型参数
+            X: input feature matrix [nitrogen_add, PC1, PC2, ..., PCn]
+            *params: model parameters
 
         Returns:
-            预测的biomass值
+            predicted biomass values
         """
-        raise NotImplementedError("子类必须实现model_func方法")
+        raise NotImplementedError("Subclasses must implement the model_func method")
 
     def get_param_names(self) -> List[str]:
-        """获取参数名称 - 子类应重写"""
+        """Get parameter names - subclasses should override this method"""
         return [f"param_{i}" for i in range(len(self.params))] if self.params is not None else []
 
     def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         """
-        获取初始参数估计 - 子类可以重写以提供更好的初始值
+        Get initial parameter estimates - subclasses can override this method to provide better initial values
 
         Args:
-            X: 输入特征矩阵
-            y: 目标变量（某些模型需要用于初始化）
+            X: input feature matrix
+            y: target variable (some models need it for initialization)
 
         Returns:
-            初始参数数组
+            initial parameter array
         """
-        # 默认实现：使用简单的初始值
+        # Default implementation: use simple initial values
         n_params = self._get_n_params(X)
-        # 使用y来避免未使用参数警告，但默认实现不需要它
+        # Use y to avoid unused parameter warning, but default implementation does not need it
         _ = y  
         return np.ones(n_params)
 
     def _get_n_params(self, X: np.ndarray) -> int:
-        """获取参数数量 - 子类应重写"""
-        return X.shape[1] + 1  # 默认：截距 + 每个特征一个系数
+        """Get number of parameters - subclasses should override this method"""
+        return X.shape[1] + 1  # Default: intercept + one coefficient for each feature
 
     def fit(self, 
             X: np.ndarray, 
@@ -97,28 +96,28 @@ class NLSModel:
             method: str = 'trf',
             max_nfev: int = 10000) -> ModelFitResult:
         """
-        拟合模型
+        Fit model
 
         Args:
-            X: 输入特征矩阵 [nitrogen_add, PC1, PC2, ..., PCn]
+            X: input feature matrix [nitrogen_add, PC1, PC2, ..., PCn]
                shape: (n_samples, n_features)
-            y: 目标变量 (biomass)
+            y: target variable (biomass)
                shape: (n_samples,)
-            method: 优化方法 ('trf', 'dogbox', 'lm')
-            max_nfev: 最大函数评估次数
+            method: optimization method ('trf', 'dogbox', 'lm')
+            max_nfev: maximum number of function evaluations
 
         Returns:
-            ModelFitResult对象
+            ModelFitResult object
         """
-        logger.info(f"开始拟合模型: {self.name}")
-        logger.info(f"  样本数: {len(y)}, 特征数: {X.shape[1]}")
+        logger.info(f"Starting model fitting: {self.name}")
+        logger.info(f"  Sample size: {len(y)}, Features: {X.shape[1]}")
 
-        # 获取初始参数
+        # Get initial parameters
         p0 = self.get_initial_params(X, y)
-        logger.info(f"  初始参数: {p0}")
+        logger.info(f"  Initial parameters: {p0}")
 
         try:
-            # 使用curve_fit进行非线性最小二乘拟合
+            # Use curve_fit for non-linear least squares fitting
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
 
@@ -127,7 +126,7 @@ class NLSModel:
 
                 popt, pcov = curve_fit(
                     f=model_wrapper,
-                    xdata=X.T,  # curve_fit期望xdata为(n_features, n_samples)
+                    xdata=X.T,  # curve_fit expects xdata to be (n_features, n_samples)
                     ydata=y,
                     p0=p0,
                     method=method,
@@ -137,31 +136,31 @@ class NLSModel:
 
             self.params = popt
 
-            # 计算参数标准误
+            # Calculate parameter standard errors
             try:
                 perr = np.sqrt(np.diag(pcov))
                 self.params_std = perr
             except (ValueError, RuntimeError):
                 self.params_std = np.full_like(popt, np.nan)
-                logger.warning("无法计算参数标准误")
+                logger.warning("Unable to compute parameter standard errors")
 
-            # 计算预测值和残差
+            # Calculate predicted values and residuals
             y_pred = self.predict(X)
             residuals = y - y_pred
 
-            # 计算评估指标
+            # Calculate evaluation metrics
             r2 = r2_score(y, y_pred)
             rmse = np.sqrt(mean_squared_error(y, y_pred))
             mae = mean_absolute_error(y, y_pred)
 
-            # 计算信息准则
+            # Calculate information criteria
             n = len(y)
             k = len(popt)
             rss = np.sum(residuals**2)
             aic = n * np.log(rss / n) + 2 * k
             bic = n * np.log(rss / n) + k * np.log(n)
 
-            # 创建结果对象
+            # Create result object
             self.fit_result = ModelFitResult(
                 params=popt,
                 params_std=self.params_std,
@@ -173,11 +172,11 @@ class NLSModel:
                 residuals=residuals,
                 predictions=y_pred,
                 convergence=True,
-                message="拟合成功",
+                message="Fitting successful",
                 param_names=self.get_param_names()
             )
 
-            logger.info(f"模型拟合完成: {self.name}")
+            logger.info(f"Model fitting completed: {self.name}")
             logger.info(f"  R² = {r2:.4f}")
             logger.info(f"  RMSE = {rmse:.4f}")
             logger.info(f"  AIC = {aic:.2f}")
@@ -185,9 +184,9 @@ class NLSModel:
             return self.fit_result
 
         except (RuntimeError, ValueError) as e:
-            logger.error(f"模型拟合失败: {self.name} - {str(e)}")
+            logger.error(f"Model fitting failed: {self.name} - {str(e)}")
 
-            # 返回失败结果
+            # Return failed result
             self.fit_result = ModelFitResult(
                 params=p0,
                 params_std=np.full_like(p0, np.nan),
@@ -199,7 +198,7 @@ class NLSModel:
                 residuals=np.full(len(y), np.nan),
                 predictions=np.full(len(y), np.nan),
                 convergence=False,
-                message=f"拟合失败: {str(e)}",
+                message=f"Fitting failed: {str(e)}",
                 param_names=self.get_param_names()
             )
 
@@ -207,33 +206,33 @@ class NLSModel:
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         """
-        预测
+        Predict
 
         Args:
-            X: 输入特征矩阵
+            X: input feature matrix
 
         Returns:
-            预测值数组
+            predicted values array
         """
         if self.params is None:
-            raise ValueError("模型尚未拟合，请先调用fit方法")
+            raise ValueError("Model not fitted yet, please call fit method first")
 
         return self.model_func(X.T, *self.params)
 
     def summary(self) -> str:
-        """生成模型摘要报告"""
+        """Generate model summary report"""
         if self.fit_result is None:
-            return f"模型 {self.name} 尚未拟合"
+            return f"Model {self.name} not fitted yet"
 
         lines = []
         lines.append("=" * 70)
-        lines.append(f"模型: {self.name}")
+        lines.append(f"Model: {self.name}")
         lines.append("=" * 70)
         lines.append("")
 
-        # 拟合统计
-        lines.append("拟合统计:")
-        lines.append(f"  收敛状态: {'成功' if self.fit_result.convergence else '失败'}")
+        # Fitting statistics
+        lines.append("Fitting Statistics:")
+        lines.append(f"  Convergence: {'Success' if self.fit_result.convergence else 'Failed'}")
         if not np.isnan(self.fit_result.r2):
             lines.append(f"  R² = {self.fit_result.r2:.4f}")
             lines.append(f"  RMSE = {self.fit_result.rmse:.4f}")
@@ -242,9 +241,9 @@ class NLSModel:
             lines.append(f"  BIC = {self.fit_result.bic:.2f}")
         lines.append("")
 
-        # 参数估计
-        lines.append("参数估计:")
-        lines.append(f"{'参数':<20} {'估计值':<15} {'标准误':<15}")
+        # Parameter estimates
+        lines.append("Parameter estimates:")
+        lines.append(f"{'Parameter':<20} {'Estimated value':<15} {'Standard error':<15}")
         lines.append("-" * 50)
         for name, val, std in zip(self.fit_result.param_names, 
                                    self.fit_result.params, 
@@ -256,23 +255,93 @@ class NLSModel:
         return "\n".join(lines)
 
 
-class AdditiveModel(NLSModel):
+class LinearModel(NLSModel):
     """
-    加法模型: 氮沉降通过改变PCA分量的加法效应影响biomass
+    Linear model (OLS): simple linear regression as baseline reference
 
-    模型形式:
-    biomass = β0 + Σ(βi * PCi) + Σ(γi * N * PCi)
+    Model form:
+    biomass = β0 + β_N * N + Σ(βi * PCi)
 
-    其中:
-    - β0: 截距
-    - βi: PCA分量的主效应
-    - γi: 氮沉降与PCA分量的交互效应
-    - N: 氮添加量
-    - PCi: 第i个主成分
+    Where:
+    - β0: intercept
+    - β_N: coefficient for nitrogen addition
+    - βi: coefficients for PCA components
+    - N: nitrogen addition
+    - PCi: i-th principal component
+
+    This is the simplest model using ordinary least squares (OLS) as a baseline for comparison.
     """
 
     def __init__(self):
-        super().__init__("加法交互模型 (Additive Interaction)")
+        super().__init__("Linear Model (OLS)")
+
+    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
+        """
+        X: shape (n_features, n_samples)
+           X[0, :] = nitrogen_add
+           X[1:, :] = PC components
+        """
+        nitrogen = X[0, :]
+        pcs = X[1:, :]
+
+        # Parameter allocation
+        # params = [β0, β_N, β1, ..., βn]
+        beta0 = params[0]
+        beta_n = params[1]
+        betas = np.array(params[2:])
+
+        # Calculate predicted values
+        # biomass = β0 + β_N * N + Σ(βi * PCi)
+        pred = beta0 + beta_n * nitrogen
+        pred += np.sum(betas[:, np.newaxis] * pcs, axis=0)
+
+        return pred
+
+    def _get_n_params(self, X: np.ndarray) -> int:
+        n_pcs = X.shape[1] - 1  # Subtract nitrogen column
+        return 2 + n_pcs  # β0 + β_N + βs
+
+    def get_param_names(self) -> List[str]:
+        if self.params is None:
+            return []
+        n_pcs = len(self.params) - 2
+
+        names = ['β0_intercept', 'β_N']
+        names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
+        return names
+
+    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
+        """Use simple linear regression to get initial parameter estimates"""
+        n_pcs = X.shape[1] - 1
+        p0 = np.zeros(self._get_n_params(X))
+
+        # Use mean of y as intercept initial value
+        p0[0] = np.mean(y)
+        # Initial value for nitrogen coefficient
+        p0[1] = 0.0
+        # Initial values for PC coefficients
+        p0[2:] = 0.0
+
+        return p0
+
+
+class AdditiveModel(NLSModel):
+    """
+    Additive model: nitrogen deposition through the additive effect of PCA components on biomass
+
+    Model form:
+    biomass = β0 + Σ(βi * PCi) + Σ(γi * N * PCi)
+
+    Where:
+    - β0: intercept
+    - βi: main effect of PCA components
+    - γi: interaction effect of nitrogen deposition and PCA components
+    - N: nitrogen addition
+    - PCi: i-th principal component
+    """
+
+    def __init__(self):
+        super().__init__("Additive Interaction Model")
 
     def model_func(self, X: np.ndarray, *params) -> np.ndarray:
         """
@@ -284,13 +353,13 @@ class AdditiveModel(NLSModel):
         pcs = X[1:, :]
         n_pcs = pcs.shape[0]
 
-        # 参数分配
+        # Parameter allocation
         # params = [β0, β1, ..., βn, γ1, ..., γn]
         beta0 = params[0]
         betas = np.array(params[1:n_pcs+1])
         gammas = np.array(params[n_pcs+1:])
 
-        # 计算预测值
+        # Calculate predicted values
         # biomass = β0 + Σ(βi * PCi) + Σ(γi * N * PCi)
         pred = beta0
         pred += np.sum(betas[:, np.newaxis] * pcs, axis=0)
@@ -299,7 +368,7 @@ class AdditiveModel(NLSModel):
         return pred
 
     def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1  # 减去nitrogen列
+        n_pcs = X.shape[1] - 1  # Subtract nitrogen column
         return 1 + n_pcs + n_pcs  # β0 + βs + γs
 
     def get_param_names(self) -> List[str]:
@@ -316,25 +385,25 @@ class AdditiveModel(NLSModel):
     def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         n_pcs = X.shape[1] - 1
         p0 = np.zeros(self._get_n_params(X))
-        p0[0] = np.mean(y)  # 截距初始值为y的均值
-        p0[1:n_pcs+1] = 0.1  # 主效应初始值
-        p0[n_pcs+1:] = 0.01  # 交互效应初始值（较小）
+        p0[0] = np.mean(y)  # Initial value of intercept is the mean of y
+        p0[1:n_pcs+1] = 0.1  # Initial value of main effect
+        p0[n_pcs+1:] = 0.01  # Initial value of interaction effect (smaller)
         return p0
 
 
 class MultiplicativeModel(NLSModel):
     """
-    乘法模型: 氮沉降通过改变PCA分量的乘法效应影响biomass
+    Multiplicative model: nitrogen deposition through the multiplicative effect of PCA components on biomass
 
-    模型形式:
+    Model form:
     biomass = β0 * exp(Σ(βi * PCi) + Σ(γi * N * PCi))
 
-    或简化为:
+    Or simplified as:
     biomass = β0 * Π(exp(βi * PCi)) * Π(exp(γi * N * PCi))
     """
 
     def __init__(self):
-        super().__init__("乘法交互模型 (Multiplicative)")
+        super().__init__("Multiplicative Interaction Model")
 
     def model_func(self, X: np.ndarray, *params) -> np.ndarray:
         nitrogen = X[0, :]
@@ -345,7 +414,7 @@ class MultiplicativeModel(NLSModel):
         betas = np.array(params[1:n_pcs+1])
         gammas = np.array(params[n_pcs+1:])
 
-        # biomass = β0 * exp(Σ(βi * PCi) + Σ(γi * N * PCi))
+        # Predicted values: biomass = β0 * exp(Σ(βi * PCi) + Σ(γi * N * PCi))
         exponent = np.sum(betas[:, np.newaxis] * pcs, axis=0)
         exponent += np.sum(gammas[:, np.newaxis] * nitrogen[np.newaxis, :] * pcs, axis=0)
 
@@ -371,7 +440,7 @@ class MultiplicativeModel(NLSModel):
     def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
         n_pcs = X.shape[1] - 1
         p0 = np.zeros(self._get_n_params(X))
-        p0[0] = np.median(y)  # 尺度参数
+        p0[0] = np.median(y)  # Scale parameter
         p0[1:n_pcs+1] = 0.01
         p0[n_pcs+1:] = 0.001
         return p0
@@ -379,42 +448,42 @@ class MultiplicativeModel(NLSModel):
 
 class MichaelisMentenModel(NLSModel):
     """
-    Michaelis-Menten模型: 饱和响应模型
+    Michaelis-Menten model: saturation response model
 
-    模型形式:
+    Model form:
     biomass = (Vmax * f(PC)) / (Km + N) + baseline
 
-    其中:
-    - Vmax: 最大响应
-    - Km: 半饱和常数
-    - f(PC): PCA分量的线性组合
-    - baseline: 基线biomass
+    Where:
+    - Vmax: maximum response
+    - Km: half-saturation constant
+    - f(PC): linear combination of PCA components
+    - baseline: baseline biomass
     """
 
     def __init__(self):
-        super().__init__("Michaelis-Menten饱和模型")
+        super().__init__("Michaelis-Menten Saturation Model")
 
     def model_func(self, X: np.ndarray, *params) -> np.ndarray:
         nitrogen = X[0, :]
         pcs = X[1:, :]
 
-        # params = [Vmax, Km, baseline, β1, ..., βn]
+        # Parameters: [Vmax, Km, baseline, β1, ..., βn]
         Vmax = params[0]
         Km = params[1]
         baseline = params[2]
         betas = np.array(params[3:])
 
-        # f(PC) = Σ(βi * PCi)
+        # f(PC) = Σ(βi * PCi) = linear combination of PCA components
         f_pc = np.sum(betas[:, np.newaxis] * pcs, axis=0)
 
-        # biomass = (Vmax * f(PC)) / (Km + N) + baseline
+        # Predicted values: biomass = (Vmax * f(PC)) / (Km + N) + baseline
         pred = (Vmax * f_pc) / (Km + nitrogen + 1e-10) + baseline
 
         return pred
 
     def _get_n_params(self, X: np.ndarray) -> int:
         n_pcs = X.shape[1] - 1
-        return 3 + n_pcs  # Vmax, Km, baseline, βs
+        return 3 + n_pcs  # Vmax, Km, baseline, βs = parameters
 
     def get_param_names(self) -> List[str]:
         if self.params is None:
@@ -437,24 +506,24 @@ class MichaelisMentenModel(NLSModel):
 
 class ExponentialModel(NLSModel):
     """
-    指数模型: 指数响应模型
+    Exponential model: exponential response model
 
-    模型形式:
+    Model form:
     biomass = β0 + Σ(αi * PCi) * exp(β * N)
 
-    或:
+    Or:
     biomass = β0 * exp(Σ(βi * PCi) + γ * N)
     """
 
     def __init__(self, variant: str = 'v1'):
         """
         Args:
-            variant: 'v1' 或 'v2'
-                v1: biomass = β0 + Σ(αi * PCi) * exp(β * N)
-                v2: biomass = β0 * exp(Σ(βi * PCi) + γ * N)
+            variant: 'v1' or 'v2'
+                v1: Predicted values: biomass = β0 + Σ(αi * PCi) * exp(β * N)
+                v2: Predicted values: biomass = β0 * exp(Σ(βi * PCi) + γ * N)
         """
         self.variant = variant
-        name = f"指数模型 (Exponential-{variant})"
+        name = f"Exponential-{variant} Model"
         super().__init__(name)
 
     def model_func(self, X: np.ndarray, *params) -> np.ndarray:
@@ -524,31 +593,32 @@ def fit_nls_models(nitrogen_add: np.ndarray,
                    biomass: np.ndarray,
                    models: Optional[List[NLSModel]] = None) -> Dict[str, ModelFitResult]:
     """
-    拟合多个NLS模型
+    Fit multiple NLS models
 
     Args:
-        nitrogen_add: 氮添加量数组, shape (n_samples,)
-        pca_components: PCA降维后的数据, shape (n_samples, n_components)
-        biomass: 生物量数组, shape (n_samples,)
-        models: 要拟合的模型列表，如果为None则使用所有默认模型
+        nitrogen_add: nitrogen addition array, shape (n_samples,)
+        pca_components: PCA components after dimensionality reduction, shape (n_samples, n_components)
+        biomass: biomass array, shape (n_samples,)
+        models: list of models to fit, if None, use all default models
 
     Returns:
-        字典，键为模型名称，值为ModelFitResult
+        dictionary, key is model name, value is ModelFitResult
     """
     logger.info("=" * 70)
-    logger.info("开始拟合多个NLS模型")
+    logger.info("Starting to fit multiple NLS models")
     logger.info("=" * 70)
-    logger.info(f"样本数: {len(biomass)}")
-    logger.info(f"PCA分量数: {pca_components.shape[1]}")
-    logger.info(f"氮添加量范围: [{nitrogen_add.min():.2f}, {nitrogen_add.max():.2f}]")
-    logger.info(f"生物量范围: [{biomass.min():.2f}, {biomass.max():.2f}]")
+    logger.info(f"Sample size: {len(biomass)}")
+    logger.info(f"PCA components: {pca_components.shape[1]}")
+    logger.info(f"Nitrogen addition range: [{nitrogen_add.min():.2f}, {nitrogen_add.max():.2f}]")
+    logger.info(f"Biomass range: [{biomass.min():.2f}, {biomass.max():.2f}]")
 
-    # 构建输入矩阵 X = [nitrogen_add, PC1, PC2, ..., PCn]
+    # Build input matrix X = [nitrogen_add, PC1, PC2, ..., PCn]
     X = np.column_stack([nitrogen_add, pca_components])
 
-    # 如果未指定模型，使用所有默认模型
+    # If no models are specified, use all default models
     if models is None:
         models = [
+            LinearModel(),
             AdditiveModel(),
             MultiplicativeModel(),
             MichaelisMentenModel(),
@@ -559,22 +629,22 @@ def fit_nls_models(nitrogen_add: np.ndarray,
     results = {}
 
     for model in models:
-        logger.info(f"\n拟合模型: {model.name}")
+        logger.info(f"\nFitting model: {model.name}")
         try:
             result = model.fit(X, biomass)
             results[model.name] = result
 
             if result.convergence:
-                logger.info(f"✓ {model.name} 拟合成功")
+                logger.info(f"✓ {model.name} fitting successful")
                 logger.info(f"  R² = {result.r2:.4f}, RMSE = {result.rmse:.4f}")
             else:
-                logger.warning(f"✗ {model.name} 拟合失败: {result.message}")
+                logger.warning(f"✗ {model.name} fitting failed: {result.message}")
         except Exception as e:
-            logger.error(f"✗ {model.name} 拟合出错: {str(e)}")
+            logger.error(f"✗ {model.name} fitting error: {str(e)}")
             continue
 
     logger.info("\n" + "=" * 70)
-    logger.info(f"共拟合 {len(results)} 个模型")
+    logger.info(f"Total {len(results)} models fitted")
     logger.info("=" * 70)
 
     return results
@@ -582,53 +652,46 @@ def fit_nls_models(nitrogen_add: np.ndarray,
 
 def compare_models(results: Dict[str, ModelFitResult]) -> pd.DataFrame:
     """
-    比较多个模型的拟合结果
+    Compare the fitting results of multiple models
 
     Args:
-        results: 模型拟合结果字典
+        results: dictionary of model fitting results
 
     Returns:
-        比较结果DataFrame
+        DataFrame of comparison results
     """
     comparison_data = []
 
     for model_name, result in results.items():
         if result.convergence:
             comparison_data.append({
-                '模型': model_name,
+                'Model': model_name,
                 'R²': result.r2,
                 'RMSE': result.rmse,
                 'MAE': result.mae,
                 'AIC': result.aic,
                 'BIC': result.bic,
-                '参数数量': len(result.params),
-                '收敛': '是'
+                'Number of parameters': len(result.params),
+                'Convergence': 'Yes'
             })
         else:
             comparison_data.append({
-                '模型': model_name,
+                'Model': model_name,
                 'R²': np.nan,
                 'RMSE': np.nan,
                 'MAE': np.nan,
                 'AIC': np.inf,
                 'BIC': np.inf,
-                '参数数量': len(result.params),
-                '收敛': '否'
+                'Number of parameters': len(result.params),
+                'Convergence': 'No'
             })
 
     df = pd.DataFrame(comparison_data)
 
-    # 按AIC排序（越小越好）
+    # Sort by AIC (lower is better)
     df = df.sort_values('AIC', ascending=True)
 
-    logger.info("\n模型比较结果:")
+    logger.info("\nModel comparison results:")
     logger.info("\n" + df.to_string(index=False))
 
     return df
-
-
-# 优化警告类
-class OptimizationWarning(UserWarning):
-    """优化过程警告"""
-    pass
-

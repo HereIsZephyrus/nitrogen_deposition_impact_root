@@ -96,7 +96,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
         sample_cluster_result.save(os.path.join(output_dir, 'sample_cluster_result.csv'))
 
     # All processes predict cluster results
-    cluster_result = global_cluster.predict(standardized_raster)
+    cluster_result = global_cluster.predict(valid_raster)
     full_total_labels = np.full(valid_mask.shape, -1, dtype=np.int32)  # -1 for NoData
     valid_total_labels = cluster_result.labels.copy() + 1  # Start from 1
     full_total_labels[valid_mask] = valid_total_labels

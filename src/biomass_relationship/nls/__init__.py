@@ -1,10 +1,11 @@
 """
-非线性最小二乘(NLS)模块
-用于探索氮沉降如何通过影响PCA降维后的变量来影响生物量
+NLS module
+Used to explore how nitrogen deposition affects biomass through PCA-reduced variables
 """
 
 from .nls_model import (
     NLSModel,
+    LinearModel,
     AdditiveModel,
     MultiplicativeModel,
     MichaelisMentenModel,
@@ -21,6 +22,7 @@ from .analyzer import (
 
 __all__ = [
     'NLSModel',
+    'LinearModel',
     'AdditiveModel',
     'MultiplicativeModel',
     'MichaelisMentenModel',

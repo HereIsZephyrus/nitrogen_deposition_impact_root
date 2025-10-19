@@ -3,9 +3,10 @@ Sample data reader for CSV files containing field measurements
 """
 import os
 import logging
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import pandas as pd
 import numpy as np
+from sklearn.preprocessing import OneHotEncoder
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +277,142 @@ class Sample:
 
         return n_biomass, ck_biomass
 
+    def get_categorical(self) -> np.ndarray:
+        """
+        Get all categorical variables (fertilizer_type, treatment_date, vegetation_type)
+
+        Returns:
+            Array with shape (n_samples, n_categorical_features) containing category codes
+        """
+        if self._data is None:
+            return np.array([])
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        categorical_data = []
+
+        # Get vegetation type
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            veg_data = deduplicated_data['ecosystem/vegetation_type'].astype('category')
+            categorical_data.append(veg_data.cat.codes.values.astype(float))
+
+        # Stack columns if we have any categorical data
+        if categorical_data:
+            result = np.column_stack(categorical_data)
+            logger.info("Extracted categorical data: %d samples, %d features", 
+                       result.shape[0], result.shape[1])
+        else:
+            logger.warning("No categorical columns found in dataset")
+            result = np.array([])
+
+        return result
+
+    def get_categorical_onehot(self) -> Tuple[np.ndarray, List[str]]:
+        """
+        Get all categorical variables as one-hot encoded arrays
+
+        Returns:
+            Tuple of (one_hot_encoded_array, feature_names)
+            - one_hot_encoded_array: Array with shape (n_samples, n_onehot_features)
+            - feature_names: List of feature names for each one-hot column
+        """
+        if self._data is None:
+            return np.array([]), []
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        # Collect all categorical columns and their data
+        categorical_columns = []
+        categorical_arrays = []
+
+        # Get fertilizer type
+        if 'fertilizer_type' in deduplicated_data.columns:
+            fert_data = deduplicated_data['fertilizer_type'].values.reshape(-1, 1)
+            categorical_columns.append('fertilizer_type')
+            categorical_arrays.append(fert_data)
+
+        # Get treatment date
+        if 'treatment_date' in deduplicated_data.columns:
+            treat_data = deduplicated_data['treatment_date'].values.reshape(-1, 1)
+            categorical_columns.append('treatment_date')
+            categorical_arrays.append(treat_data)
+
+        # Get vegetation type
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            veg_data = deduplicated_data['ecosystem/vegetation_type'].values.reshape(-1, 1)
+            categorical_columns.append('ecosystem/vegetation_type')
+            categorical_arrays.append(veg_data)
+
+        if not categorical_arrays:
+            logger.warning("No categorical columns found for one-hot encoding")
+            return np.array([]), []
+
+        # Combine all categorical data
+        all_categorical_data = np.concatenate(categorical_arrays, axis=1)
+
+        # Apply one-hot encoding
+        encoder = OneHotEncoder(sparse_output=False, handle_unknown='ignore')
+        onehot_encoded = encoder.fit_transform(all_categorical_data)
+
+        # Generate feature names
+        feature_names = []
+        for i, col_name in enumerate(categorical_columns):
+            categories = encoder.categories_[i]
+            for category in categories:
+                feature_names.append(f"{col_name}_{category}")
+
+        logger.info("One-hot encoded categorical data: %d samples, %d features", 
+                   onehot_encoded.shape[0], onehot_encoded.shape[1])
+
+        return onehot_encoded, feature_names
+
+    def get_categorical_info(self) -> Dict[str, List[str]]:
+        """
+        Get information about categorical variable categories
+
+        Returns:
+            Dictionary mapping column names to their unique categories
+        """
+        if self._data is None:
+            return {}
+
+        # Deduplicate by group if group column exists
+        if 'group' in self._data.columns and self.grouped:
+            deduplicated_data = self._data.drop_duplicates(subset=['group'], keep='first')
+        else:
+            deduplicated_data = self._data
+
+        categorical_info = {}
+
+        # Get fertilizer type categories
+        if 'fertilizer_type' in deduplicated_data.columns:
+            categories = deduplicated_data['fertilizer_type'].dropna().unique().tolist()
+            categorical_info['fertilizer_type'] = sorted(categories)
+
+        # Get treatment date categories
+        if 'treatment_date' in deduplicated_data.columns:
+            categories = deduplicated_data['treatment_date'].dropna().unique().tolist()
+            categorical_info['treatment_date'] = sorted(categories)
+
+        # Get vegetation type categories
+        if 'ecosystem/vegetation_type' in deduplicated_data.columns:
+            categories = deduplicated_data['ecosystem/vegetation_type'].dropna().unique().tolist()
+            categorical_info['ecosystem/vegetation_type'] = sorted(categories)
+
+        logger.info("Categorical info extracted for %d variables", len(categorical_info))
+        for col, cats in categorical_info.items():
+            logger.info("  %s: %d categories (%s)", col, len(cats), ', '.join(map(str, cats[:5])) + ('...' if len(cats) > 5 else ''))
+
+        return categorical_info
+
     def get_dataframe(self) -> pd.DataFrame:
         """
         Get the raw pandas DataFrame
@@ -294,18 +431,3 @@ class Sample:
         if self._data is None:
             return "SampleReader(no data loaded)"
         return f"SampleReader({len(self._data)} samples, {len(self._data.columns)} columns)"
-
-def calculate_dependence(sample: Sample) -> np.ndarray:
-    """
-    Calculate dependence from sample file
-
-    Args:
-        sample: Sample object
-
-    Returns:
-        Array of dependence
-    """
-    biomass_add, biomass_ck = sample.get_biomass()
-    duration = sample.get_duration()
-    dependence = biomass_add / biomass_ck
-    return dependence
