@@ -57,56 +57,9 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
     standardizer = Standardizer(dimension=dim)
     standardizer.fit(stacked_raster)
     standardized_sample = standardizer.standardize(sample_data)
-
-    sample_cluster = GMMCluster(
-        n_components=sample_k,
-        confidence=confidence,
-        max_iter=100,
-        tol=1e-6,
-        random_state=42,
-        n_init=50,
-        max_covariance_det=8.0,
-        min_cluster_separation=0.4,
-        max_mean_mahalanobis=4.0
-    )
-    sample_cluster.fit(standardized_sample)
-    sample_cluster_result = sample_cluster.predict_with_confidence(standardized_sample)
-
-    # Only rank 0 saves results
-    if rank == 0:
-        sample_cluster_result.save(os.path.join(output_dir, 'sample_cluster_result.csv'))
-
     standardized_raster = standardizer.standardize(stacked_raster.data)
 
-    valid_mask = np.all(np.isfinite(standardized_raster), axis=-1)
-    if rank == 0:
-        logger.info(f"Valid raster pixels: {np.sum(valid_mask)} / {valid_mask.size} ({100*np.sum(valid_mask)/valid_mask.size:.2f}%)")
-
-    valid_raster_data = standardized_raster[valid_mask]
-    raster_cluster_first_result = sample_cluster.predict_with_confidence(valid_raster_data)
-
-    full_labels = np.full(valid_mask.shape, -1, dtype=np.int32)  # -1 for NoData
-
-    valid_labels = np.full(valid_raster_data.shape[0], 0, dtype=np.int32)
-    valid_labels[raster_cluster_first_result.confident_mask] = raster_cluster_first_result.labels[raster_cluster_first_result.confident_mask] + 1
-    full_labels[valid_mask] = valid_labels
-
-    # Only rank 0 writes raster
-    if rank == 0:
-        first_raster_cluster_result_path = os.path.join(output_dir, 'first_raster_cluster_result.tif')
-        write_raster(
-            data = full_labels,
-            ref_raster = stacked_raster,
-            output_path = first_raster_cluster_result_path
-        )
-
-    # Exclude confident pixels from further clustering
-    res_data = raster_cluster_first_result.exclude(valid_raster_data)
-
-    # Determine if we should use MPI for log likelihood calculation
-    # Only use MPI if we're in an MPI environment (multiple processes)
     use_mpi_for_calc = MPI_AVAILABLE and (comm is not None) and (comm.Get_size() > 1)
-
     global_gmm_params = {
         "confidence": confidence,
         "max_iter": 100,
@@ -115,7 +68,7 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
         "n_init": 3,
         "use_mpi": use_mpi_for_calc  # Use MPI for log likelihood calculation inside GMMCluster
     }
-    besk_k = 11 # has already been selected
+    besk_k = 14 # has already been selected
     #besk_k = select_optimal_k_with_aic(
     #    X=res_data,
     #    k_range=range(9, 12),
@@ -125,28 +78,35 @@ def main(sample_k: int, confidence: float, output_dir: str, climate_dir: str, sa
     #    if rank == 0:
     #        logger.error("No optimal k found")
     #    raise ValueError("No optimal k found")
-    res_cluster = GMMCluster(
+    # All processes create global_cluster and participate in fitting
+    global_cluster = GMMCluster(
         n_components=besk_k,
         **global_gmm_params
     )
-    res_cluster.fit(res_data)
-    res_cluster_result = res_cluster.predict(res_data)
+    valid_mask = np.all(np.isfinite(standardized_raster), axis=-1)
+    valid_raster = standardized_raster[valid_mask]
 
-    # Reconstruct full raster with both first and second clustering results
+    if rank == 0:
+        logger.info(f"Fitting global GMM with {besk_k} components")
+    global_cluster.fit(valid_raster)
+
+    # All processes predict, but only rank 0 saves sample results
+    sample_cluster_result = global_cluster.predict_with_confidence(standardized_sample)
+    if rank == 0:
+        sample_cluster_result.save(os.path.join(output_dir, 'sample_cluster_result.csv'))
+
+    # All processes predict cluster results
+    cluster_result = global_cluster.predict(standardized_raster)
     full_total_labels = np.full(valid_mask.shape, -1, dtype=np.int32)  # -1 for NoData
-
-    valid_total_labels = raster_cluster_first_result.labels.copy() + 1  # Start from 1
-    not_confident_mask = ~raster_cluster_first_result.confident_mask
-    valid_total_labels[not_confident_mask] = res_cluster_result.labels + sample_k + 1
-
+    valid_total_labels = cluster_result.labels.copy() + 1  # Start from 1
     full_total_labels[valid_mask] = valid_total_labels
 
     # Only rank 0 writes final results
     if rank == 0:
-        res_cluster_result_path = os.path.join(output_dir, 'total_cluster_result.tif')
+        cluster_result_path = os.path.join(output_dir, 'total_cluster_result.tif')
         write_raster(
             data = full_total_labels,
             ref_raster = stacked_raster,
-            output_path = res_cluster_result_path
+            output_path = cluster_result_path
         )
-        res_cluster_result.save(os.path.join(output_dir, 'second_cluster_result.csv'))
+        cluster_result.save(os.path.join(output_dir, 'cluster_result.csv'))

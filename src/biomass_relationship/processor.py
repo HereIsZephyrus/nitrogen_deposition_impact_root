@@ -21,7 +21,8 @@ from .pca import PCAnalyzer
 from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
 from ..n_impact_soil.calculator import SoilCalculator, transfer_N_input
-from ..geo_reader import load_variance, Sample, calculate_dependence
+from ..geo_reader import load_variance, Sample, get_climate_group
+from ..n_impact_soil import NitrogenToSoilInfluencer
 from ..variance import unpack_variance
 
 logger = logging.getLogger(__name__)
@@ -964,32 +965,73 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
     """
     sample_data_path = os.path.join(statistic_folder_path, 'sample.csv')
     soil_impact_data_path = os.path.join(statistic_folder_path, 'soil_change_nitrogen.csv')
+    time_impact_data_path = os.path.join(statistic_folder_path, 'soil_change_year.csv')
 
     unique_sample = Sample(sample_data_path, grouped=True)
     input_var = load_variance(climate_dir=climate_dir, sample=unique_sample)
-    climate_group = get_climate_group(unique_sample)
-
-    total_sample = Sample(sample_data_path, grouped=False)
-    biomass_add, biomass_ck = total_sample.get_biomass()
 
     raw_data = unpack_variance(input_var)
     raw_data = drop_nan(raw_data)
+    climate_group = get_climate_group(os.path.join(output_dir, 'sample_cluster_result.csv'))
+    climate_group = climate_group[raw_data.index] # exclude dropped rows
 
     pca_analyzer = PCAnalyzer(
         max_components=20,
         variance_threshold=0.95,
     )
-
     pca_analyzer.fit(raw_data)
     pca_analyzer.save(os.path.join(output_dir, 'pca_analyzer.csv'))
-    n_to_soil_influencer = NitrogenToSoilInfluencer(soil_impact_data_path)
+
+    total_sample = Sample(sample_data_path, grouped=False)
+    total_variance_data, total_climate_group = load_variance(climate_dir=climate_dir, sample=total_sample)
+    total_data = unpack_variance(total_variance_data)
+    total_data = drop_nan(total_data)
+    total_climate_group = np.array(total_climate_group)[total_data.index] # exclude dropped rows
+    biomass_add, biomass_ck = total_sample.get_biomass()
+    nitrogen_add = total_sample.get_nitrogen()
+    biomass_add = biomass_add[total_data.index]
+    biomass_ck = biomass_ck[total_data.index]
+    nitrogen_add = nitrogen_add[total_data.index]
+
+    n_to_soil_influencer = NitrogenToSoilInfluencer(
+        nitrogen_impact_data_path=soil_impact_data_path,
+        time_impact_data_path=time_impact_data_path
+    )
 
     for group in np.unique(climate_group):
-        group_biomass_add = biomass_add[climate_group == group]
-        group_biomass_ck = biomass_ck[climate_group == group]
-        raw_group_data = raw_data[climate_group == group,:]
-        transformed_data_CK = pca_analyzer.transform(raw_group_data)
-        transformed_data_ADD = pca_analyzer.transform(n_to_soil_influencer.impact(raw_group_data))
+        group_biomass_add = biomass_add[total_climate_group == group]
+        group_biomass_ck = biomass_ck[total_climate_group == group]
+        group_nitrogen_add = nitrogen_add[total_climate_group == group]
+        group_model_data = total_data[total_climate_group == group]
+        transformed_data_CK = pca_analyzer.transform(group_model_data)
+        impacted_data = n_to_soil_influencer.impact(
+            group_model_data,
+            group_nitrogen_add[:, 0], # addition rate
+            group_nitrogen_add[:, 2], # duration
+        )
+        transformed_data_ADD = pca_analyzer.transform(impacted_data)
+        group_transformed_data = np.concatenate([transformed_data_CK, transformed_data_ADD], axis=0)
+        group_dependence = np.concatenate([group_biomass_add, group_biomass_ck], axis=0)
 
-
+        #first train nls model
+        nls_model = NLSAnalyzer(
+            output_dir=output_dir,
+            climate_group=group
+        )
+        nls_model.run_complete_analysis(
+            nitrogen_add=group_nitrogen_add,
+            pca_components=group_transformed_data,
+            biomass=group_dependence,
+            create_plots=True
+        )
+        #then train svm model
+        svm_model = SVMModel(
+            output_dir=output_dir,
+            climate_group=group
+        )
+        svm_model.run_complete_analysis(
+            transformed_data=group_transformed_data,
+            dependence=group_dependence,
+            create_plots=True
+        )
     return model

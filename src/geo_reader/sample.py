@@ -3,9 +3,10 @@ Raster sampling utilities using GDAL
 """
 import os
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from math import floor
 import numpy as np
+import pandas as pd
 from osgeo import gdal
 from .raster_reader import Raster
 from .sample_reader import Sample
@@ -55,11 +56,19 @@ def sample_raster(raster: Raster, points: List[Tuple[float, float]]) -> np.ndarr
     sampled_values = raster.data[:, py_list, px_list]
     return sampled_values
 
-def get_sample_data(sample_file: str, raster: Raster) -> np.ndarray:
+def get_sample_data(sample_file: str, raster: Raster, grouped: bool = True) -> np.ndarray:
     """
-    raster shape in (dim, x, y)
+    Sample climate data from raster based on sample locations
+
+    Args:
+        sample_file: Path to sample CSV file
+        raster: Climate raster data
+        grouped: Whether to deduplicate by group (default True)
+
+    Returns:
+        Array with shape (n_bands, n_samples) where n_samples depends on grouped parameter
     """
-    samples = Sample(sample_file)
+    samples = Sample(sample_file, grouped=grouped)
     sample_locations = samples.get_location()
     # sample in raster
     sample_data = sample_raster(raster, sample_locations)
@@ -79,7 +88,7 @@ def stack_rasters(raster_list: List[Raster]) -> Raster:
     stacked_data = np.stack([raster.data for raster in raster_list], axis=0)
     return Raster(stacked_data, raster_list[0].geotransform, raster_list[0].resolution)
 
-def load_variance(climate_dir: str, sample: Sample) -> List[Variance]:
+def load_variance(climate_dir: str, sample: Sample) -> Union[List[Variance], Tuple[List[Variance], List[int]]]:
     """
     Load variance from sample file and climate raster data
 
@@ -88,7 +97,8 @@ def load_variance(climate_dir: str, sample: Sample) -> List[Variance]:
         sample: Sample object
 
     Returns:
-        List of Variance objects, one per sample
+        If sample.grouped is True: List of Variance objects (one per unique group)
+        If sample.grouped is False: Tuple of (List of Variance objects, List of group IDs)
     """
 
     # Load and stack climate rasters
@@ -99,28 +109,42 @@ def load_variance(climate_dir: str, sample: Sample) -> List[Variance]:
 
     if not raster_list:
         logger.error("No valid rasters found in %s", climate_dir)
-        return []
+        if sample.grouped:
+            return []
+        else:
+            return [], []
 
     stacked_raster = stack_rasters(raster_list)
 
-    # Sample climate data from rasters (deduplicated by group)
-    climate_data = get_sample_data(sample.sample_file, stacked_raster)  # shape: (n_bands, n_unique_groups)
+    # Sample climate data from rasters
+    climate_data = get_sample_data(sample.sample_file, stacked_raster, grouped=sample.grouped)
 
-    # Get data from sample using various get methods (all deduplicated by group)
-    soil_data = sample.get_soil()  # shape: (n_unique_groups, n_soil_features)
-    nitrogen_data = sample.get_nitrogen()  # shape: (n_unique_groups, 4)
-    vegetation_data = sample.get_vegetation()  # shape: (n_unique_groups,)
+    # Get data from sample using various get methods
+    # Behavior depends on sample.grouped attribute
+    soil_data = sample.get_soil()
+    nitrogen_data = sample.get_nitrogen()
+    vegetation_data = sample.get_vegetation()
 
-    # Get number of unique groups (all data is deduplicated by group)
-    n_unique_groups = climate_data.shape[1] if climate_data.ndim > 1 else len(climate_data)
-    n_total_samples = len(sample)  # Total records in CSV (before deduplication)
+    # Get group information for non-grouped mode
+    group_list = None
+    if not sample.grouped:
+        group_list = sample.get_group()
 
-    logger.info("Processing %d unique groups from %d total samples", n_unique_groups, n_total_samples)
+    # Determine processing mode based on sample.grouped attribute
+    if sample.grouped:
+        # Grouped mode: data is deduplicated by group
+        n_samples = climate_data.shape[1] if climate_data.ndim > 1 else len(climate_data)
+        n_total_records = len(sample)  # Total records in CSV (before deduplication)
+        logger.info("Processing %d unique groups from %d total samples (grouped mode)", n_samples, n_total_records)
+    else:
+        # Non-grouped mode: process all individual records
+        n_samples = len(sample)  # All individual records
+        logger.info("Processing %d individual samples (non-grouped mode)", n_samples)
 
     # Build variance list
     variance_list = []
 
-    for i in range(n_unique_groups):
+    for i in range(n_samples):
         try:
             # Extract climate data for this sample
             # Assuming climate_data has shape (n_bands, n_samples) with bands ordered as:
@@ -221,7 +245,24 @@ def load_variance(climate_dir: str, sample: Sample) -> List[Variance]:
             logger.warning("Error creating Variance for group %d: %s", i, e)
             continue
 
-    logger.info("Created %d Variance objects from %d unique groups (%d total samples)", 
-                len(variance_list), n_unique_groups, n_total_samples)
+    if sample.grouped:
+        logger.info("Created %d Variance objects from %d unique groups (%d total records)", 
+                    len(variance_list), n_samples, len(sample))
+        return variance_list
+    else:
+        logger.info("Created %d Variance objects from %d individual samples", 
+                    len(variance_list), n_samples)
+        return variance_list, group_list
 
-    return variance_list
+def get_climate_group(sample_cluster_result_file: str) -> np.ndarray:
+    """
+    Get climate group from sample cluster result file
+
+    Args:
+        sample_cluster_result_file: Path to sample cluster result file
+
+    Returns:
+        Array of climate group
+    """
+    sample_cluster_result = pd.read_csv(sample_cluster_result_file)
+    return sample_cluster_result['labels'].values.astype(int)

@@ -17,7 +17,7 @@ class SoilCalculator:
     Uses data from soil_change.csv with various regression methods
     """
 
-    def __init__(self, data_path: str, method: Literal['linear', 'spline', 'polynomial'] = 'linear'):
+    def __init__(self, data_path: str, method: Literal['linear', 'spline', 'polynomial']):
         """
         Initialize soil calculator
 
@@ -195,6 +195,29 @@ class SoilCalculator:
                 predictions[indicator] = None
 
         return predictions
+
+    def predict_soil_variance(self, soil_variance, n_addition: float, duration: float = None):
+        """
+        Predict soil changes based on ImpactedSoilVariance input
+
+        Args:
+            soil_variance: ImpactedSoilVariance object or dictionary of soil properties
+            n_addition: Nitrogen addition level in kg N ha⁻¹ y⁻¹
+            duration: Duration in years (optional, used for time-based calculations)
+
+        Returns:
+            ImpactedSoilVariance object with predicted changes
+        """
+        from .variance import ImpactedSoilVariance
+
+        # Get predictions for all indicators
+        predictions = self.predict_all(n_addition)
+
+        # Map predictions to ImpactedSoilVariance structure
+        return ImpactedSoilVariance(
+            soil_ph=predictions.get('soil_ph', 0.0),
+            total_nitrogen=predictions.get('total_nitrogen', 0.0)
+        )
 
     def get_unit(self, indicator: str) -> str:
         """Get the unit for a specific indicator"""

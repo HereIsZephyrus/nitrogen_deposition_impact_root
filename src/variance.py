@@ -61,10 +61,7 @@ class SoilVariance(BaseModel):
     # Base saturation and other properties
     teb: float = Field(..., description="Total exchangeable bases (cmol/kg)")
     bsat: float = Field(..., description="Base saturation (%)")
-    alum_sat: float = Field(..., description="Aluminum saturation (%)")
-    esp: float = Field(..., description="Exchangeable sodium percentage (%)")
     tcarbon_eq: float = Field(..., description="Total carbon equivalent (%)")
-    gypsum: float = Field(..., description="Gypsum content (%)")
     elec_cond: float = Field(..., description="Electrical conductivity (dS/m)")
 
 
