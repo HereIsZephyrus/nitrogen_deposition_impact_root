@@ -47,7 +47,7 @@
                 "--sample-k", "2",
                 "--confidence", "0.80",
                 "--output", "./results/",
-                "--climate", "/mnt/repo/ndata/wcbio210s/",
+                "--climate", "/mnt/repo/ndata/wcbio5m/",
                 "--sample", "./data/sample.csv"
             ]
         },
@@ -55,7 +55,12 @@
             "name": "debug biomass_relationship module",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.biomass_relationship"
+            "module": "src.biomass_relationship",
+            "args": [
+                "--statistic-folder", "./data/",
+                "--output", "./results/",
+                "--climate", "/mnt/repo/ndata/wcbio5m/"
+            ]
         }
     ]
 }

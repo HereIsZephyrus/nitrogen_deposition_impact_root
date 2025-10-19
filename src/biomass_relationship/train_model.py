@@ -522,7 +522,7 @@ class ModelTrainer:
     def _plot_nls_results(self, results: Dict[str, Any]):
         """Visualize NLS results"""
         fig, axes = plt.subplots(2, 2, figsize=(15, 15))
-        fig.suptitle(f'第{self.group}组气候类型样本的多元回归模型比较')
+        fig.suptitle(f'第{self.group}组气候类型样本的多元回归模型比较', fontweight='bold', fontsize=18)
         axes = axes.flatten()
 
         for idx, (model_name, result) in enumerate(results.items()):

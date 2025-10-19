@@ -317,24 +317,25 @@ class Sample:
         for group_id in data_with_groups['group'].unique():
             group_mask = data_with_groups['group'] == group_id
             group_data = data_with_groups[group_mask]
-
             n_values = group_data[n_col].values
             ck_values = group_data[ck_col].values
             combined_values = np.concatenate([n_values, ck_values])
 
-            group_mean = np.mean(combined_values)
-            group_std = np.std(combined_values, ddof=1)
+            group_min = np.min(combined_values)
+            group_max = np.max(combined_values)
 
-            if group_std == 0:
-                logger.warning("Standard deviation is 0 for group %s, using z-score = 0", group_id)
-                group_std = 1
+            if group_max == group_min:
+                logger.warning("Max equals min for group %s, using normalized value = 0", group_id)
+                group_range = 1
+            else:
+                group_range = group_max - group_min
 
             group_indices = np.where(group_mask)[0]
-            normalized_n[group_indices] = (n_values - group_mean) / group_std
-            normalized_ck[group_indices] = (ck_values - group_mean) / group_std
+            normalized_n[group_indices] = (n_values - group_min) / group_range
+            normalized_ck[group_indices] = (ck_values - group_min) / group_range
 
-            logger.debug("Group %s: mean=%.3f, std=%.3f, n_samples=%d", 
-                        group_id, group_mean, group_std, len(group_data))
+            logger.debug("Group %s: min=%.3f, max=%.3f, n_samples=%d",
+                        group_id, group_min, group_max, len(group_data))
 
         logger.info("Normalized biomass data by group: %d samples", len(normalized_n))
 
