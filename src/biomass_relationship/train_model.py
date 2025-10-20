@@ -13,6 +13,7 @@ from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
+from .model import BiomassModel
 
 from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
@@ -113,13 +114,78 @@ class ModelTrainer:
 
         return results
 
+    def _create_biomass_model(
+        self, 
+        results: Dict[str, Any], 
+        model_type: str,
+        training_config: Dict[str, Any] = None
+    ) -> 'BiomassModel':
+        """
+        Select best model from results and wrap it in BiomassModel
+        
+        Args:
+            results: Dictionary of model results
+            model_type: Type of model ('NLS', 'SVM', 'DecisionTree')
+            training_config: Additional training configuration
+            
+        Returns:
+            BiomassModel with best performing model
+        """
+        
+        # Select best model based on LOOCV R²
+        best_model_name = max(results.keys(), key=lambda k: results[k]['cv_results']['r2'])
+        best_result = results[best_model_name]
+        best_cv_results = best_result['cv_results']
+        
+        logger.info(f"\nBest {model_type} model selected: {best_model_name}")
+        logger.info(f"  LOOCV R² = {best_cv_results['r2']:.4f}")
+        logger.info(f"  LOOCV RMSE = {best_cv_results['rmse']:.4f}")
+        
+        # Prepare feature names
+        feature_names = ['N_addition'] + [f'PC{i+1}' for i in range(self.X.shape[1])]
+        
+        # Prepare performance metrics
+        performance_metrics = {
+            'r2': best_cv_results['r2'],
+            'rmse': best_cv_results['rmse'],
+            'mae': best_cv_results['mae'],
+            'mape': best_cv_results.get('mape', 0.0),
+            'n_successful_folds': best_cv_results.get('n_successful_folds', len(self.y))
+        }
+        
+        # Merge training config
+        config = {
+            'n_samples': len(self.y),
+            'n_features': self.X.shape[1],
+            'model_type': model_type,
+            'model_variant': best_model_name
+        }
+        if training_config:
+            config.update(training_config)
+        
+        # Create BiomassModel wrapper
+        best_model_wrapper = BiomassModel(
+            model_name=f'{model_type}_{best_model_name}',
+            model_type=model_type,
+            trained_model=best_result['model'],
+            climate_group=self.group,
+            performance_metrics=performance_metrics,
+            pca_analyzer=None,  # Will be set by processor
+            n_impact_calculator=None,  # Will be set by processor
+            feature_names=feature_names,
+            training_config=config,
+            model_variant=best_model_name
+        )
+        
+        return best_model_wrapper
+
     def train_nls(self, 
                   n_addtion: np.ndarray, 
                   alpha_l1: float = 0.0,
                   alpha_l2: float = 0.0,
                   auto_regularization: bool = True,
                   save_to_file: bool = True, 
-                  plot: bool = False) -> Dict[str, Any]:
+                  plot: bool = False) -> BiomassModel:
         """
         Train Non-linear least squares (NLS) model, using LOOCV validation
 
@@ -242,7 +308,12 @@ class ModelTrainer:
 
         logger.info(f"\nNLS model training completed - Group {self.group}")
 
-        return all_results
+        # Create BiomassModel with best NLS model
+        training_config = {
+            'alpha_l1': alpha_l1,
+            'alpha_l2': alpha_l2
+        }
+        return self._create_biomass_model(all_results, 'NLS', training_config)
 
     def train_svm(self,
                   n_addtion: np.ndarray,
@@ -250,7 +321,7 @@ class ModelTrainer:
                   auto_tune: bool = True,
                   intensive_search: bool = True,
                   save_to_file: bool = True, 
-                  plot: bool = False) -> Dict[str, Any]:
+                  plot: bool = False) -> BiomassModel:
         """
         Train SVM regression model with nitrogen addition as a feature, using LOOCV validation
 
@@ -382,7 +453,18 @@ class ModelTrainer:
 
         logger.info(f"\nSVM model training completed - Group {self.group}")
 
-        return all_results
+        # Create BiomassModel with best SVM model
+        training_config = {
+            'kernels': kernels,
+            'auto_tune': auto_tune,
+            'intensive_search': intensive_search,
+            'best_kernel': best_kernel
+        }
+        # Add best parameters if available
+        if 'best_params' in all_results[best_kernel]:
+            training_config['best_params'] = all_results[best_kernel]['best_params']
+        
+        return self._create_biomass_model(all_results, 'SVM', training_config)
 
     def train_decision_tree(self, 
                             n_addtion: np.ndarray,
@@ -392,7 +474,7 @@ class ModelTrainer:
                             learning_rate: float = 0.1,
                             n_estimators: int = 100,
                             save_to_file: bool = True, 
-                            plot: bool = False) -> Dict[str, Any]:
+                            plot: bool = False) -> BiomassModel:
         """
         Train decision tree models (XGBoost and LightGBM) with N addition as feature,
         using LOOCV validation and SHAP analysis
@@ -564,7 +646,15 @@ class ModelTrainer:
 
         logger.info(f"\nDecision tree model training completed - Group {self.group}")
 
-        return all_results
+        # Create BiomassModel with best Decision Tree model
+        training_config = {
+            'max_depth': max_depth,
+            'min_samples_split': min_samples_split,
+            'min_samples_leaf': min_samples_leaf,
+            'learning_rate': learning_rate,
+            'n_estimators': n_estimators
+        }
+        return self._create_biomass_model(all_results, 'DecisionTree', training_config)
 
     def _compare_nls_results(self, results: Dict[str, Any]) -> pd.DataFrame:
         """Compare NLS model results"""

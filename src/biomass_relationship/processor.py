@@ -72,13 +72,15 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
         if (len(group_nitrogen_add) < 3):
             logger.warning(f"Group {group} has less than 5 samples, skipping")
             continue
-        group_biomass_add = np.log(biomass_add[total_climate_group == group])
-        group_biomass_ck = np.log(biomass_ck[total_climate_group == group])
+        group_biomass_add = biomass_add[total_climate_group == group]
+        group_biomass_ck = biomass_ck[total_climate_group == group]
         group_average = np.mean(
             np.stack([group_biomass_add, group_biomass_ck]),
             axis=0
         )
         group_average = (group_average - np.mean(group_average)) / np.std(group_average) # standardize average biomass
+        group_biomass_add = np.log(group_biomass_add)
+        group_biomass_ck = np.log(group_biomass_ck)
         group_model_data = total_data[total_climate_group == group]
         group_categorical_data = total_categorical_data[total_climate_group == group]
         transformed_data_ck = pca_analyzer.transform(group_model_data)
@@ -102,7 +104,8 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             group = group,
             output_dir = output_dir
         )
-        trainer.train_nls(
+        # Train all three types of models (each returns best BiomassModel)
+        best_nls_model = trainer.train_nls(
             n_addtion = group_n_addtion,
             alpha_l1 = 0.1,
             alpha_l2 = 0.02,
@@ -110,14 +113,16 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             save_to_file = True,
             plot = True
         )
-        trainer.train_svm(
+
+        best_svm_model = trainer.train_svm(
             n_addtion = group_n_addtion,
             auto_tune = True,
             intensive_search = True,
             save_to_file = True,
             plot = True
         )
-        trainer.train_decision_tree(
+
+        best_decision_tree_model = trainer.train_decision_tree(
             n_addtion = group_n_addtion, 
             max_depth = 10, 
             min_samples_split = 2, 
@@ -127,6 +132,17 @@ def train(statistic_folder_path: str, climate_dir: str, output_dir: str):
             save_to_file = True, 
             plot = True
         )
+
+        # Set PCA analyzer and N impact calculator for all models
+        best_nls_model.pca_analyzer = pca_analyzer
+        best_nls_model.n_impact_calculator = n_to_soil_influencer
+        best_nls_model.save(os.path.join(output_dir, f'nls_model_{group}.pkl'))
+        best_svm_model.pca_analyzer = pca_analyzer
+        best_svm_model.n_impact_calculator = n_to_soil_influencer
+        best_svm_model.save(os.path.join(output_dir, f'svm_model_{group}.pkl'))
+        best_decision_tree_model.pca_analyzer = pca_analyzer
+        best_decision_tree_model.n_impact_calculator = n_to_soil_influencer
+        best_decision_tree_model.save(os.path.join(output_dir, f'decision_tree_model_{group}.pkl'))
 
 def drop_nan(raw_data: pd.DataFrame) -> pd.DataFrame:
     """
