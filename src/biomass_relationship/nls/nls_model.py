@@ -89,27 +89,27 @@ class NLSModel:
     def _get_n_params(self, X: np.ndarray) -> int:
         """Get number of parameters - subclasses should override this method"""
         return X.shape[1] + 1  # Default: intercept + one coefficient for each feature
-    
+
     def _check_overfitting_risk(self, X: np.ndarray, y: np.ndarray) -> tuple:
         """
         Check overfitting risk based on parameter-to-sample ratio
-        
+
         Args:
             X: input feature matrix
             y: target variable
-            
+
         Returns:
             (risk_level, param_ratio) where risk_level is 'high', 'moderate', 'low', or 'minimal'
         """
         n_samples = len(y)
         n_params = self._get_n_params(X)
         param_ratio = n_params / n_samples
-        
+
         logger.info(f"  Overfitting risk assessment:")
         logger.info(f"    Parameters: {n_params}, Samples: {n_samples}, Ratio: {param_ratio:.3f}")
 
         return risk_level, param_ratio
- 
+
     def fit(self, 
             X: np.ndarray, 
             y: np.ndarray,
@@ -139,11 +139,11 @@ class NLSModel:
         """
         logger.info(f"Starting model fitting: {self.name}")
         logger.info(f"  Sample size: {len(y)}, Features: {X.shape[1]}")
-        
+
         # Check overfitting risk
         if check_overfitting:
             risk_level, _ = self._check_overfitting_risk(X, y)
-            
+
             # Suggest regularization if not provided
             if (risk_level in ['high', 'moderate']) and (alpha_l1 == 0.0 and alpha_l2 == 0.0):
                 logger.warning("  WARNING: Overfitting risk detected but no regularization applied!")
@@ -152,7 +152,7 @@ class NLSModel:
         # Get initial parameters
         p0 = self.get_initial_params(X, y)
         logger.info(f"  Initial parameters: {p0}")
-        
+
         # Log regularization settings
         if alpha_l1 > 0 or alpha_l2 > 0:
             logger.info(f"  Regularization: L1 (α={alpha_l1}), L2 (α={alpha_l2})")
@@ -165,25 +165,25 @@ class NLSModel:
                 # If regularization is used, we need to use least_squares directly
                 if alpha_l1 > 0 or alpha_l2 > 0:
                     from scipy.optimize import least_squares
-                    
+
                     def residual_func(params):
                         """Compute residuals with regularization"""
                         # Model residuals
                         y_pred = self.model_func(X.T, *params)
                         residuals = y - y_pred
-                        
+
                         # Add L2 (Ridge) penalty to residuals
                         if alpha_l2 > 0:
                             l2_penalty = np.sqrt(alpha_l2) * params
                             residuals = np.concatenate([residuals, l2_penalty])
-                        
+
                         # Add L1 (Lasso) penalty via soft thresholding in loss
                         # For L1, we modify the optimization but keep residuals for RSS
                         return residuals
-                    
+
                     # For L1 regularization, we use soft_l1 loss which approximates L1
                     loss_type = 'soft_l1' if alpha_l1 > 0 else 'linear'
-                    
+
                     result = least_squares(
                         fun=residual_func,
                         x0=p0,
@@ -192,9 +192,9 @@ class NLSModel:
                         loss=loss_type,
                         f_scale=alpha_l1 if alpha_l1 > 0 else 1.0
                     )
-                    
+
                     popt = result.x
-                    
+
                     # Compute covariance matrix approximation
                     try:
                         # Jacobian at solution
@@ -206,7 +206,7 @@ class NLSModel:
                         pcov = np.linalg.inv(J.T @ J) * var_residuals
                     except (np.linalg.LinAlgError, ValueError):
                         pcov = np.full((len(popt), len(popt)), np.inf)
-                        
+
                 else:
                     # Standard curve_fit without regularization
                     def model_wrapper(x, *p):
@@ -245,7 +245,7 @@ class NLSModel:
             n = len(y)
             k = len(popt)
             rss = np.sum(residuals**2)
-            
+
             # Handle edge case where RSS is zero or very small
             epsilon = 1e-10
             if rss <= epsilon:
@@ -254,7 +254,7 @@ class NLSModel:
                 rss_adjusted = epsilon
             else:
                 rss_adjusted = rss
-            
+
             aic = n * np.log(rss_adjusted / n) + 2 * k
             bic = n * np.log(rss_adjusted / n) + k * np.log(n)
 
@@ -351,459 +351,3 @@ class NLSModel:
         lines.append("=" * 70)
 
         return "\n".join(lines)
-
-
-class LinearModel(NLSModel):
-    """
-    Linear model (OLS): simple linear regression as baseline reference
-
-    Model form:
-    biomass = β0 + β_N * N + Σ(βi * PCi)
-
-    Where:
-    - β0: intercept
-    - β_N: coefficient for nitrogen addition
-    - βi: coefficients for PCA components
-    - N: nitrogen addition
-    - PCi: i-th principal component
-
-    This is the simplest model using ordinary least squares (OLS) as a baseline for comparison.
-    """
-
-    def __init__(self):
-        super().__init__("Linear Model (OLS)")
-
-    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
-        """
-        X: shape (n_features, n_samples)
-           X[0, :] = nitrogen_add
-           X[1:, :] = PC components
-        """
-        nitrogen = X[0, :]
-        pcs = X[1:, :]
-
-        # Parameter allocation
-        # params = [β0, β_N, β1, ..., βn]
-        beta0 = params[0]
-        beta_n = params[1]
-        betas = np.array(params[2:])
-
-        # Calculate predicted values
-        # biomass = β0 + β_N * N + Σ(βi * PCi)
-        pred = beta0 + beta_n * nitrogen
-        pred += np.sum(betas[:, np.newaxis] * pcs, axis=0)
-
-        return pred
-
-    def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1  # Subtract nitrogen column
-        return 2 + n_pcs  # β0 + β_N + βs
-
-    def get_param_names(self) -> List[str]:
-        if self.params is None:
-            return []
-        n_pcs = len(self.params) - 2
-
-        names = ['β0_intercept', 'β_N']
-        names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
-        return names
-
-    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        """Use simple linear regression to get initial parameter estimates"""
-        n_pcs = X.shape[1] - 1
-        p0 = np.zeros(self._get_n_params(X))
-
-        # Use mean of y as intercept initial value
-        p0[0] = np.mean(y)
-        # Initial value for nitrogen coefficient
-        p0[1] = 0.0
-        # Initial values for PC coefficients
-        p0[2:] = 0.0
-
-        return p0
-
-
-class AdditiveModel(NLSModel):
-    """
-    Additive model: nitrogen deposition through the additive effect of PCA components on biomass
-
-    Model form:
-    biomass = β0 + Σ(βi * PCi) + Σ(γi * N * PCi)
-
-    Where:
-    - β0: intercept
-    - βi: main effect of PCA components
-    - γi: interaction effect of nitrogen deposition and PCA components
-    - N: nitrogen addition
-    - PCi: i-th principal component
-    """
-
-    def __init__(self):
-        super().__init__("Additive Interaction Model")
-
-    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
-        """
-        X: shape (n_features, n_samples)
-           X[0, :] = nitrogen_add
-           X[1:, :] = PC components
-        """
-        nitrogen = X[0, :]
-        pcs = X[1:, :]
-        n_pcs = pcs.shape[0]
-
-        # Parameter allocation
-        # params = [β0, β1, ..., βn, γ1, ..., γn]
-        beta0 = params[0]
-        betas = np.array(params[1:n_pcs+1])
-        gammas = np.array(params[n_pcs+1:])
-
-        # Calculate predicted values
-        # biomass = β0 + Σ(βi * PCi) + Σ(γi * N * PCi)
-        pred = beta0
-        pred += np.sum(betas[:, np.newaxis] * pcs, axis=0)
-        pred += np.sum(gammas[:, np.newaxis] * nitrogen[np.newaxis, :] * pcs, axis=0)
-
-        return pred
-
-    def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1  # Subtract nitrogen column
-        return 1 + n_pcs + n_pcs  # β0 + βs + γs
-
-    def get_param_names(self) -> List[str]:
-        if self.params is None:
-            return []
-        n_total = len(self.params)
-        n_pcs = (n_total - 1) // 2
-
-        names = ['β0_intercept']
-        names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
-        names += [f'γ{i+1}_N×PC{i+1}' for i in range(n_pcs)]
-        return names
-
-    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        n_pcs = X.shape[1] - 1
-        p0 = np.zeros(self._get_n_params(X))
-        p0[0] = np.mean(y)  # Initial value of intercept is the mean of y
-        p0[1:n_pcs+1] = 0.1  # Initial value of main effect
-        p0[n_pcs+1:] = 0.01  # Initial value of interaction effect (smaller)
-        return p0
-
-
-class MultiplicativeModel(NLSModel):
-    """
-    Multiplicative model: nitrogen deposition through the multiplicative effect of PCA components on biomass
-
-    Model form:
-    biomass = β0 * exp(Σ(βi * PCi) + Σ(γi * N * PCi))
-
-    Or simplified as:
-    biomass = β0 * Π(exp(βi * PCi)) * Π(exp(γi * N * PCi))
-    """
-
-    def __init__(self):
-        super().__init__("Multiplicative Interaction Model")
-
-    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
-        nitrogen = X[0, :]
-        pcs = X[1:, :]
-
-        beta0 = params[0]
-        n_pcs = pcs.shape[0]
-        betas = np.array(params[1:n_pcs+1])
-        gammas = np.array(params[n_pcs+1:])
-
-        # Predicted values: biomass = β0 * exp(Σ(βi * PCi) + Σ(γi * N * PCi))
-        exponent = np.sum(betas[:, np.newaxis] * pcs, axis=0)
-        exponent += np.sum(gammas[:, np.newaxis] * nitrogen[np.newaxis, :] * pcs, axis=0)
-
-        pred = beta0 * np.exp(exponent)
-
-        return pred
-
-    def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1
-        return 1 + n_pcs + n_pcs
-
-    def get_param_names(self) -> List[str]:
-        if self.params is None:
-            return []
-        n_total = len(self.params)
-        n_pcs = (n_total - 1) // 2
-
-        names = ['β0_scale']
-        names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
-        names += [f'γ{i+1}_N×PC{i+1}' for i in range(n_pcs)]
-        return names
-
-    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        n_pcs = X.shape[1] - 1
-        p0 = np.zeros(self._get_n_params(X))
-        p0[0] = np.median(y)  # Scale parameter
-        p0[1:n_pcs+1] = 0.01
-        p0[n_pcs+1:] = 0.001
-        return p0
-
-
-class MichaelisMentenModel(NLSModel):
-    """
-    Michaelis-Menten model: saturation response model
-
-    Model form:
-    biomass = (Vmax * f(PC)) / (Km + N) + baseline
-
-    Where:
-    - Vmax: maximum response
-    - Km: half-saturation constant
-    - f(PC): linear combination of PCA components
-    - baseline: baseline biomass
-    """
-
-    def __init__(self):
-        super().__init__("Michaelis-Menten Saturation Model")
-
-    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
-        nitrogen = X[0, :]
-        pcs = X[1:, :]
-
-        # Parameters: [Vmax, Km, baseline, β1, ..., βn]
-        Vmax = params[0]
-        Km = params[1]
-        baseline = params[2]
-        betas = np.array(params[3:])
-
-        # f(PC) = Σ(βi * PCi) = linear combination of PCA components
-        f_pc = np.sum(betas[:, np.newaxis] * pcs, axis=0)
-
-        # Predicted values: biomass = (Vmax * f(PC)) / (Km + N) + baseline
-        pred = (Vmax * f_pc) / (Km + nitrogen + 1e-10) + baseline
-
-        return pred
-
-    def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1
-        return 3 + n_pcs  # Vmax, Km, baseline, βs = parameters
-
-    def get_param_names(self) -> List[str]:
-        if self.params is None:
-            return []
-        n_pcs = len(self.params) - 3
-
-        names = ['Vmax', 'Km', 'baseline']
-        names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
-        return names
-
-    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        n_pcs = X.shape[1] - 1
-        p0 = np.zeros(self._get_n_params(X))
-        p0[0] = np.max(y) - np.min(y)  # Vmax
-        p0[1] = np.mean(X[:, 0])  # Km
-        p0[2] = np.min(y)  # baseline
-        p0[3:] = 0.1  # βs
-        return p0
-
-
-class ExponentialModel(NLSModel):
-    """
-    Exponential model: exponential response model
-
-    Model form:
-    biomass = β0 + Σ(αi * PCi) * exp(β * N)
-
-    Or:
-    biomass = β0 * exp(Σ(βi * PCi) + γ * N)
-    """
-
-    def __init__(self, variant: str = 'v1'):
-        """
-        Args:
-            variant: 'v1' or 'v2'
-                v1: Predicted values: biomass = β0 + Σ(αi * PCi) * exp(β * N)
-                v2: Predicted values: biomass = β0 * exp(Σ(βi * PCi) + γ * N)
-        """
-        self.variant = variant
-        name = f"Exponential-{variant} Model"
-        super().__init__(name)
-
-    def model_func(self, X: np.ndarray, *params) -> np.ndarray:
-        nitrogen = X[0, :]
-        pcs = X[1:, :]
-        n_pcs = pcs.shape[0]
-
-        if self.variant == 'v1':
-            # biomass = β0 + Σ(αi * PCi) * exp(β * N)
-            beta0 = params[0]
-            beta_n = params[1]
-            alphas = np.array(params[2:])
-
-            pc_effect = np.sum(alphas[:, np.newaxis] * pcs, axis=0)
-            pred = beta0 + pc_effect * np.exp(beta_n * nitrogen)
-
-        else:  # v2
-            # biomass = β0 * exp(Σ(βi * PCi) + γ * N)
-            beta0 = params[0]
-            betas = np.array(params[1:n_pcs+1])
-            gamma = params[-1]
-
-            exponent = np.sum(betas[:, np.newaxis] * pcs, axis=0) + gamma * nitrogen
-            pred = beta0 * np.exp(exponent)
-
-        return pred
-
-    def _get_n_params(self, X: np.ndarray) -> int:
-        n_pcs = X.shape[1] - 1
-        if self.variant == 'v1':
-            return 2 + n_pcs  # β0, β_n, αs
-        else:
-            return 2 + n_pcs  # β0, βs, γ
-
-    def get_param_names(self) -> List[str]:
-        if self.params is None:
-            return []
-        n_pcs = len(self.params) - 2
-
-        if self.variant == 'v1':
-            names = ['β0_intercept', 'β_N']
-            names += [f'α{i+1}_PC{i+1}' for i in range(n_pcs)]
-        else:
-            names = ['β0_scale']
-            names += [f'β{i+1}_PC{i+1}' for i in range(n_pcs)]
-            names.append('γ_N')
-        return names
-
-    def get_initial_params(self, X: np.ndarray, y: np.ndarray) -> np.ndarray:
-        n_pcs = X.shape[1] - 1
-        p0 = np.zeros(self._get_n_params(X))
-
-        if self.variant == 'v1':
-            p0[0] = np.mean(y)
-            p0[1] = 0.01
-            p0[2:] = 0.1
-        else:
-            p0[0] = np.median(y)
-            p0[1:-1] = 0.01
-            p0[-1] = 0.001
-
-        return p0
-
-
-def fit_nls_models(nitrogen_add: np.ndarray,
-                   pca_components: np.ndarray,
-                   biomass: np.ndarray,
-                   models: Optional[List[NLSModel]] = None,
-                   alpha_l1: float = 0.0,
-                   alpha_l2: float = 0.0,
-                   check_overfitting: bool = True) -> Dict[str, ModelFitResult]:
-    """
-    Fit multiple NLS models
-
-    Args:
-        nitrogen_add: nitrogen addition array, shape (n_samples,)
-        pca_components: PCA components after dimensionality reduction, shape (n_samples, n_components)
-        biomass: biomass array, shape (n_samples,)
-        models: list of models to fit, if None, use all default models
-        alpha_l1: L1 regularization parameter (Lasso), default 0.0
-                  Recommended: 0.01-0.1 for overfitting issues
-        alpha_l2: L2 regularization parameter (Ridge), default 0.0
-                  Recommended: 0.01-0.1 for overfitting issues
-        check_overfitting: whether to check overfitting risk, default True
-
-    Returns:
-        dictionary, key is model name, value is ModelFitResult
-    """
-    logger.info("=" * 70)
-    logger.info("Starting to fit multiple NLS models")
-    logger.info("=" * 70)
-    logger.info(f"Sample size: {len(biomass)}")
-    logger.info(f"PCA components: {pca_components.shape[1]}")
-    logger.info(f"Nitrogen addition range: [{nitrogen_add.min():.2f}, {nitrogen_add.max():.2f}]")
-    logger.info(f"Biomass range: [{biomass.min():.2f}, {biomass.max():.2f}]")
-
-    # Build input matrix X = [nitrogen_add, PC1, PC2, ..., PCn]
-    X = np.column_stack([nitrogen_add, pca_components])
-
-    # If no models are specified, use all default models
-    if models is None:
-        models = [
-            LinearModel(),
-            AdditiveModel(),
-            MultiplicativeModel(),
-            MichaelisMentenModel(),
-            ExponentialModel('v1'),
-            ExponentialModel('v2')
-        ]
-
-    results = {}
-
-    for model in models:
-        logger.info(f"\nFitting model: {model.name}")
-        try:
-            result = model.fit(
-                X,
-                biomass,
-                alpha_l1=alpha_l1,
-                alpha_l2=alpha_l2,
-                check_overfitting=check_overfitting
-            )
-            results[model.name] = result
-
-            if result.convergence:
-                logger.info(f"✓ {model.name} fitting successful")
-                logger.info(f"  R² = {result.r2:.4f}, RMSE = {result.rmse:.4f}")
-            else:
-                logger.warning(f"✗ {model.name} fitting failed: {result.message}")
-        except Exception as e:
-            logger.error(f"✗ {model.name} fitting error: {str(e)}")
-            continue
-
-    logger.info("\n" + "=" * 70)
-    logger.info(f"Total {len(results)} models fitted")
-    logger.info("=" * 70)
-
-    return results
-
-
-def compare_models(results: Dict[str, ModelFitResult]) -> pd.DataFrame:
-    """
-    Compare the fitting results of multiple models
-
-    Args:
-        results: dictionary of model fitting results
-
-    Returns:
-        DataFrame of comparison results
-    """
-    comparison_data = []
-
-    for model_name, result in results.items():
-        if result.convergence:
-            comparison_data.append({
-                'Model': model_name,
-                'R²': result.r2,
-                'RMSE': result.rmse,
-                'MAE': result.mae,
-                'AIC': result.aic,
-                'BIC': result.bic,
-                'Number of parameters': len(result.params),
-                'Convergence': 'Yes'
-            })
-        else:
-            comparison_data.append({
-                'Model': model_name,
-                'R²': np.nan,
-                'RMSE': np.nan,
-                'MAE': np.nan,
-                'AIC': np.inf,
-                'BIC': np.inf,
-                'Number of parameters': len(result.params),
-                'Convergence': 'No'
-            })
-
-    df = pd.DataFrame(comparison_data)
-
-    # Sort by AIC (lower is better)
-    df = df.sort_values('AIC', ascending=True)
-
-    logger.info("\nModel comparison results:")
-    logger.info("\n" + df.to_string(index=False))
-
-    return df
