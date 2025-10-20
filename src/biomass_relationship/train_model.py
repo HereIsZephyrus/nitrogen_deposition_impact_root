@@ -1,7 +1,7 @@
 """
-模型训练器 - 使用留一法(LOOCV)交叉验证
+Model training commander - using Leave-One-Out Cross-Validation (LOOCV)
 
-集成NLS、SVM、决策树模型的训练和验证流程
+Integrate the training and validation process of NLS, SVM, and decision tree models
 """
 import os
 import logging
@@ -17,7 +17,7 @@ from .model import BiomassModel
 
 from .svm import KernelSVMRegressor
 from .shap import SHAPAnalyzer
-from .nls.nls_model import (
+from .nls import (
     LinearModel,
     AdditiveModel,
     MichaelisMentenModel,
@@ -122,28 +122,28 @@ class ModelTrainer:
     ) -> 'BiomassModel':
         """
         Select best model from results and wrap it in BiomassModel
-        
+
         Args:
             results: Dictionary of model results
             model_type: Type of model ('NLS', 'SVM', 'DecisionTree')
             training_config: Additional training configuration
-            
+
         Returns:
             BiomassModel with best performing model
         """
-        
+
         # Select best model based on LOOCV R²
         best_model_name = max(results.keys(), key=lambda k: results[k]['cv_results']['r2'])
         best_result = results[best_model_name]
         best_cv_results = best_result['cv_results']
-        
+
         logger.info(f"\nBest {model_type} model selected: {best_model_name}")
         logger.info(f"  LOOCV R² = {best_cv_results['r2']:.4f}")
         logger.info(f"  LOOCV RMSE = {best_cv_results['rmse']:.4f}")
-        
+
         # Prepare feature names
         feature_names = ['N_addition'] + [f'PC{i+1}' for i in range(self.X.shape[1])]
-        
+
         # Prepare performance metrics
         performance_metrics = {
             'r2': best_cv_results['r2'],
@@ -152,7 +152,7 @@ class ModelTrainer:
             'mape': best_cv_results.get('mape', 0.0),
             'n_successful_folds': best_cv_results.get('n_successful_folds', len(self.y))
         }
-        
+
         # Merge training config
         config = {
             'n_samples': len(self.y),
@@ -162,7 +162,7 @@ class ModelTrainer:
         }
         if training_config:
             config.update(training_config)
-        
+
         # Create BiomassModel wrapper
         best_model_wrapper = BiomassModel(
             model_name=f'{model_type}_{best_model_name}',
@@ -176,7 +176,7 @@ class ModelTrainer:
             training_config=config,
             model_variant=best_model_name
         )
-        
+
         return best_model_wrapper
 
     def train_nls(self, 
@@ -206,7 +206,7 @@ class ModelTrainer:
         logger.info("=" * 70)
         logger.info(f"Starting training NLS model - Group {self.group}")
         logger.info("=" * 70)
-        
+
         # Check overfitting risk and suggest regularization if needed
         if auto_regularization and alpha_l1 == 0.0 and alpha_l2 == 0.0:
             n_samples = len(self.y)
@@ -214,11 +214,11 @@ class ModelTrainer:
             # Estimate max parameters (for AdditiveModel: 1 + n_features + n_features)
             max_params = 1 + 2 * n_features
             param_ratio = max_params / n_samples
-            
+
             logger.info(f"\nOverfitting Risk Assessment:")
             logger.info(f"  Samples: {n_samples}, Features: {n_features}, Max params: {max_params}")
             logger.info(f"  Parameter/Sample ratio: {param_ratio:.3f}")
-            
+
             if param_ratio > 0.5:
                 alpha_l1 = 0.1
                 alpha_l2 = 0.05
@@ -238,7 +238,7 @@ class ModelTrainer:
                 logger.info(f"  Using: L1={alpha_l1}, L2={alpha_l2}")
             else:
                 logger.info(f"  ✓ MINIMAL overfitting risk - no regularization needed")
-        
+
         if alpha_l1 > 0 or alpha_l2 > 0:
             logger.info(f"\nRegularization enabled:")
             logger.info(f"  L1 (Lasso) α = {alpha_l1} - promotes sparsity")
@@ -339,11 +339,11 @@ class ModelTrainer:
         # Validate n_addition
         if n_addtion is None or len(n_addtion) != len(self.y):
             raise ValueError(f"n_addtion must be provided and match y length: {len(self.y)}")
-        
+
         # Set default kernel list
         if kernels is None:
             kernels = ['rbf', 'linear', 'poly']
-            
+
         logger.info("=" * 70)
         logger.info(f"Starting SVM training - Group {self.group}")
         logger.info("=" * 70)
@@ -351,7 +351,7 @@ class ModelTrainer:
         logger.info(f"Hyperparameter tuning: {'ENABLED' if auto_tune else 'DISABLED'}")
         logger.info(f"Search mode: {'INTENSIVE' if intensive_search else 'STANDARD'}")
         logger.info(f"Testing kernels: {', '.join(kernels)}")
-        
+
         # Warn about prediction uniformity issue
         n_samples = len(self.y)
         if n_samples < 10:
@@ -385,7 +385,7 @@ class ModelTrainer:
                 else:
                     C_val = 1.0
                     epsilon_val = 0.1
-                    
+
                 svm_model = KernelSVMRegressor(
                     kernel=kernel,
                     auto_tune=False,
@@ -421,12 +421,12 @@ class ModelTrainer:
                 'cv_results': cv_results,
                 'train_results': final_results
             }
-            
+
             # Add best parameters if auto-tuning was used
             if auto_tune and hasattr(svm_model, 'best_params') and svm_model.best_params:
                 result_dict['best_params'] = svm_model.best_params
                 logger.info(f"  Best parameters found: {svm_model.best_params}")
-            
+
             all_results[kernel] = result_dict
             self.svm_cv_results[kernel] = cv_results
 
@@ -463,7 +463,7 @@ class ModelTrainer:
         # Add best parameters if available
         if 'best_params' in all_results[best_kernel]:
             training_config['best_params'] = all_results[best_kernel]['best_params']
-        
+
         return self._create_biomass_model(all_results, 'SVM', training_config)
 
     def train_decision_tree(self, 
@@ -495,7 +495,7 @@ class ModelTrainer:
         # Validate n_addition
         if n_addtion is None or len(n_addtion) != len(self.y):
             raise ValueError(f"n_addtion must be provided and match y length: {len(self.y)}")
-            
+
         logger.info("=" * 70)
         logger.info(f"Starting decision tree training - Group {self.group}")
         logger.info("=" * 70)
@@ -512,7 +512,7 @@ class ModelTrainer:
         logger.info("\n" + "="*50)
         logger.info("Training XGBoost model...")
         logger.info("="*50)
-        
+
         xgb_params = {
             'max_depth': max_depth,
             'min_child_weight': min_samples_leaf,  # XGBoost equivalent of min_samples_leaf
@@ -545,7 +545,7 @@ class ModelTrainer:
         y_pred_train = xgb_model.predict(X_full)
         xgb_train_r2 = r2_score(self.y, y_pred_train)
         xgb_train_rmse = np.sqrt(mean_squared_error(self.y, y_pred_train))
-        
+
         logger.info(f"XGBoost training completed - Train R²: {xgb_train_r2:.4f}, RMSE: {xgb_train_rmse:.4f}")
 
         all_results['XGBoost'] = {
@@ -563,7 +563,7 @@ class ModelTrainer:
         logger.info("\n" + "="*50)
         logger.info("Training LightGBM model...")
         logger.info("="*50)
-        
+
         lgb_params = {
             'objective': 'regression',
             'metric': 'rmse',
@@ -599,7 +599,7 @@ class ModelTrainer:
         y_pred_train = lgb_model.predict(X_full)
         lgb_train_r2 = r2_score(self.y, y_pred_train)
         lgb_train_rmse = np.sqrt(mean_squared_error(self.y, y_pred_train))
-        
+
         logger.info(f"LightGBM training completed - Train R²: {lgb_train_r2:.4f}, RMSE: {lgb_train_rmse:.4f}")
 
         all_results['LightGBM'] = {
@@ -624,15 +624,15 @@ class ModelTrainer:
         logger.info("\n" + "="*70)
         logger.info("Performing SHAP Feature Importance Analysis...")
         logger.info("="*70)
-        
+
         # Prepare data for SHAP analysis
         X_df = pd.DataFrame(X_full, columns=feature_names)
-        
+
         # SHAP analysis for XGBoost
         logger.info("\nAnalyzing XGBoost feature contributions with SHAP...")
         xgb_shap_results = self._shap_analysis(xgb_model, "XGBoost", X_df, save_plots=save_to_file or plot)
         all_results['XGBoost']['shap_results'] = xgb_shap_results
-        
+
         # SHAP analysis for LightGBM
         logger.info("\nAnalyzing LightGBM feature contributions with SHAP...")
         lgb_shap_results = self._shap_analysis(lgb_model, "LightGBM", X_df, save_plots=save_to_file or plot)
@@ -691,7 +691,7 @@ class ModelTrainer:
         comparison_path = os.path.join(self.group_dir, 'nls_model_comparison.csv')
         comparison_df.to_csv(comparison_path, index=False, encoding='utf-8-sig')
         logger.info(f"NLS model comparison results saved: {comparison_path}")
-        
+
         # Save regularization settings
         if alpha_l1 > 0 or alpha_l2 > 0:
             reg_info_path = os.path.join(self.group_dir, 'nls_regularization_info.txt')
@@ -748,19 +748,19 @@ class ModelTrainer:
                 'Train_RMSE': result['train_results']['train_rmse'],
                 'Best': 'Yes' if kernel == best_kernel else 'No'
             }
-            
+
             # Add best parameters if available
             if 'best_params' in result:
                 for param_name, param_value in result['best_params'].items():
                     row_data[f'Best_{param_name}'] = param_value
-                    
+
             comparison_data.append(row_data)
 
         comparison_df = pd.DataFrame(comparison_data)
         comparison_path = os.path.join(svm_dir, 'svm_kernel_comparison.csv')
         comparison_df.to_csv(comparison_path, index=False, encoding='utf-8-sig')
         logger.info(f"SVM model comparison results saved: {comparison_path}")
-        
+
         # Save detailed best parameters info
         best_params_path = os.path.join(svm_dir, 'best_parameters_info.txt')
         with open(best_params_path, 'w', encoding='utf-8') as f:
@@ -768,7 +768,7 @@ class ModelTrainer:
             f.write("SVM Best Model Parameters\n")
             f.write("=" * 70 + "\n\n")
             f.write(f"Best Kernel: {best_kernel}\n\n")
-            
+
             best_result = results[best_kernel]
             if 'best_params' in best_result:
                 f.write("Optimized Parameters (from Grid Search):\n")
@@ -781,7 +781,7 @@ class ModelTrainer:
             else:
                 f.write("Manual Parameters Used:\n")
                 f.write(f"  (No auto-tuning performed)\n")
-                
+
             f.write("\nPerformance:\n")
             f.write(f"  LOOCV R²: {best_result['cv_results']['r2']:.4f}\n")
             f.write(f"  LOOCV RMSE: {best_result['cv_results']['rmse']:.4f}\n")
@@ -811,7 +811,7 @@ class ModelTrainer:
                 'Train_R²': result['train_r2'],
                 'Train_RMSE': result['train_rmse']
             }
-            
+
             # Add SHAP importance for top feature if available
             if 'shap_results' in result and 'importance_df' in result['shap_results']:
                 shap_df = result['shap_results']['importance_df']
@@ -820,7 +820,7 @@ class ModelTrainer:
                     top_importance = shap_df.iloc[0]['SHAP_Importance']
                     row_data['Top_Feature'] = top_feature
                     row_data['Top_SHAP_Value'] = top_importance
-            
+
             comparison_data.append(row_data)
 
         comparison_df = pd.DataFrame(comparison_data)
@@ -832,7 +832,7 @@ class ModelTrainer:
         for model_name, result in results.items():
             model = result['model']
             feature_names = result.get('feature_names', [f'PC{i+1}' for i in range(self.X.shape[1])])
-            
+
             # Save built-in feature importance
             if hasattr(model, 'feature_importances_'):
                 importance_df = pd.DataFrame({
@@ -843,7 +843,7 @@ class ModelTrainer:
                 importance_path = os.path.join(dt_dir, f'{model_name}_builtin_importance.csv')
                 importance_df.to_csv(importance_path, index=False, encoding='utf-8-sig')
                 logger.info(f"{model_name} built-in importance saved: {importance_path}")
-            
+
             # Save SHAP results summary
             if 'shap_results' in result and 'importance_df' in result['shap_results']:
                 shap_df = result['shap_results']['importance_df']
@@ -851,26 +851,26 @@ class ModelTrainer:
                     shap_summary_path = os.path.join(dt_dir, f'{model_name}_shap_importance.csv')
                     shap_df.to_csv(shap_summary_path, index=False, encoding='utf-8-sig')
                     logger.info(f"{model_name} SHAP importance saved: {shap_summary_path}")
-        
+
         logger.info("Decision tree results saved successfully")
 
     def _shap_analysis(self, model, model_name: str, X_df: pd.DataFrame = None, save_plots: bool = True):
         """
         Perform SHAP feature importance analysis for tree-based models
-        
+
         Args:
             model: Trained tree-based model (XGBoost or LightGBM)
             model_name: Name of the model for saving results
             X_df: Feature DataFrame with proper column names
             save_plots: Whether to save SHAP plots
-            
+
         Returns:
             Dictionary with SHAP analysis results
         """
         try:
             logger.info(f"Initializing SHAP analyzer for {model_name}...")
             shap_analyzer = SHAPAnalyzer(model)
-            
+
             # Use provided X_df or create default
             if X_df is None:
                 X_df = pd.DataFrame(self.X, columns=[f'PC{i+1}' for i in range(self.X.shape[1])])
@@ -878,7 +878,7 @@ class ModelTrainer:
             # Create explainer for tree-based models
             logger.info("Creating SHAP TreeExplainer...")
             shap_analyzer.create_explainer(X_df, explainer_type='tree')
-            
+
             # Calculate SHAP values
             logger.info("Calculating SHAP values...")
             shap_analyzer.calculate_shap_values(X_df)
@@ -888,7 +888,7 @@ class ModelTrainer:
             importance_df = pd.DataFrame(list(importance.items()), 
                                         columns=['Feature', 'SHAP_Importance'])
             importance_df = importance_df.sort_values('SHAP_Importance', ascending=False)
-            
+
             logger.info(f"\nSHAP Feature Importance for {model_name}:")
             logger.info("\n" + importance_df.to_string(index=False))
 
@@ -907,13 +907,13 @@ class ModelTrainer:
                 importance_df.to_csv(importance_path, index=False, encoding='utf-8-sig')
 
                 logger.info(f"SHAP analysis results saved to: {shap_dir}")
-            
+
             return {
                 'feature_importance': importance,
                 'importance_df': importance_df,
                 'shap_values': shap_analyzer.shap_values if hasattr(shap_analyzer, 'shap_values') else None
             }
-            
+
         except Exception as e:
             logger.error(f"SHAP analysis failed for {model_name}: {str(e)}")
             import traceback
